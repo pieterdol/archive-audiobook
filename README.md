@@ -70,8 +70,18 @@ comes off the first track's tags unless `--author` does. Its own `.m4b` and any 
 
 `--announce` opens the book with its title and author, read by
 [Kokoro](https://github.com/hexgrad/kokoro) on the CPU — for recordings that start straight into
-chapter one, which on a shelf of them is a file you have to remember rather than recognise. It
-becomes the first chapter, so it's one tap to skip.
+chapter one, which on a shelf of them is a file you have to remember rather than recognise. It's
+one chapter mark, so it's one tap to skip:
+
+```
+0.00s → 4.39s  A Test Book        ← the title, 0.7s, the author, 1.6s
+4.39s → 6.43s  01 Chapter 1
+```
+
+The silence between them is real, not punctuation, and it's the point: a full stop buys about a
+third of a second, which isn't long enough to read as *that was the title, this is the author* —
+and without the pause after the author, chapter one lands on top of the name. The two numbers are
+the ones speech-webui announces its own books with.
 
 ```bash
 ./audiobook.py pack "~/Audiobooks/Some Book" --announce --voice bm_george
