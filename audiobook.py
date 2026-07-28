@@ -17,6 +17,7 @@ anything is downloaded, so an item that turns out not to be can be left alone.
 Standard library only, so it runs with any python3 — the app's venv is not needed.
 """
 import argparse
+import glob
 import json
 import os
 import re
@@ -285,7 +286,8 @@ def tag_of(path, key):
     return out.stdout.strip()
 
 
-def pack(folder, names=None, title=None, author=None, bitrate="64k"):
+def pack(folder, names=None, title=None, author=None, bitrate="64k", opening=False,
+         voice="af_heart"):
     """One .m4b out of a folder of audio you already have.
 
     Nothing is fetched: these are your files. The order is the file order, naturally sorted; the
@@ -296,8 +298,10 @@ def pack(folder, names=None, title=None, author=None, bitrate="64k"):
     folder = os.path.expanduser(folder).rstrip("/")
     if not os.path.isdir(folder):
         sys.exit(f"no such folder: {folder}")
+    # Dotfiles are never somebody's chapter, and they are this script's scratch: an
+    # announcement left behind by a killed run was picked up as track 55 of a 54-track book.
     files = in_order([f for f in os.listdir(folder) if f.lower().endswith(AUDIO)
-                      and not f.lower().endswith((".m4b", ".part"))])
+                      and not f.startswith(".") and not f.lower().endswith((".m4b", ".part"))])
     if not files:
         sys.exit(f"no audio in {folder}")
     got = [(os.path.join(folder, f), os.path.splitext(f)[0]) for f in files]
@@ -305,7 +309,88 @@ def pack(folder, names=None, title=None, author=None, bitrate="64k"):
              "creator": author or tag_of(got[0][0], "artist") or ""}
     print(f"{about['title']} — {about['creator'] or 'nobody named'}")
     print(f"{len(got)} tracks from {folder}")
-    return build_m4b(about, got, folder, bitrate, names)
+    return build_m4b(about, got, folder, bitrate, names, opening, voice)
+
+
+def tags_of(path, keys=("album", "track", "title")):
+    """Several tags off one file, as a dict — one ffprobe rather than one per tag."""
+    out = subprocess.run(["ffprobe", "-v", "error",
+                          "-show_entries", "format_tags=" + ",".join(keys),
+                          "-of", "default=nw=1", path],
+                         capture_output=True, text=True, timeout=60)
+    found = {}
+    for line in out.stdout.splitlines():
+        key, _, value = line.partition("=")
+        found[key.removeprefix("TAG:").lower()] = value.strip()
+    return found
+
+
+def sorted_plan(folder):
+    """-> ({album: [(from, to)]}, [files with no album]).
+
+    A folder that a whole series downloaded into is one flat pile, and the files themselves say
+    which book each belongs to: album names it, track numbers it within it. Nothing here reads a
+    filename, because the tags are what the publisher wrote and the names are what the download
+    happened to produce.
+    """
+    tidy = lambda s: re.sub(r"\s{2,}", " ", re.sub(r"[^\w \-.,'()]+", " ", s or "")).strip()
+    found, loose = {}, []
+    for name in in_order(f for f in os.listdir(folder)
+                         if f.lower().endswith(AUDIO) and not f.startswith(".")):
+        path = os.path.join(folder, name)
+        if not os.path.isfile(path):
+            continue
+        tag = tags_of(path)
+        album = tidy(tag.get("album"))
+        if not album:
+            loose.append(name)
+            continue
+        number = re.match(r"\s*(\d+)", tag.get("track") or "")
+        at = int(number.group(1)) if number else 10_000
+        title = tidy(tag.get("title"))
+        stem = f"{at:02d} {title}" if number and title else title or os.path.splitext(name)[0]
+        found.setdefault(album, []).append((at, name, stem[:120] + os.path.splitext(name)[1]))
+    # In track order within each book, which is the order they'll be packed in — the filenames
+    # a download happened to produce say nothing about it.
+    books = {album: [(name, stem) for _at, name, stem in sorted(rows)]
+             for album, rows in found.items()}
+    return books, loose
+
+
+def sort_folder(folder, apply=False):
+    """Split a flat pile into one folder per book. Shows what it would do unless told to do it:
+    moving two hundred files on a guess is not something to find out afterwards."""
+    folder = os.path.expanduser(folder).rstrip("/")
+    if not os.path.isdir(folder):
+        sys.exit(f"no such folder: {folder}")
+    books, loose = sorted_plan(folder)
+    if not books:
+        sys.exit(f"nothing in {folder} says which book it belongs to")
+    for album, moves in sorted(books.items()):
+        clashes = len(moves) - len({stem for _was, stem in moves})
+        print(f"{album}  ({len(moves)} tracks"
+              + (f", {clashes} sharing a name" if clashes else "") + ")")
+        for was, becomes in moves[:2]:
+            print(f"    {was}\n      → {album}/{becomes}")
+        if len(moves) > 2:
+            print(f"    … and {len(moves) - 2} more")
+    if loose:
+        print(f"\n{len(loose)} file(s) with no album tag, left where they are: "
+              f"{', '.join(loose[:3])}{' …' if len(loose) > 3 else ''}")
+    if not apply:
+        print("\nThat's the plan. Add --apply to move them.")
+        return books
+    for album, moves in books.items():
+        into = os.path.join(folder, album)
+        os.makedirs(into, exist_ok=True)
+        for was, becomes in moves:
+            target = os.path.join(into, becomes)
+            if os.path.exists(target):
+                print(f"  already there, left alone: {album}/{becomes}")
+                continue
+            os.rename(os.path.join(folder, was), target)
+    print(f"\nMoved into {len(books)} folder(s). Each one is ready for: audiobook.py pack")
+    return books
 
 
 def read_names(path, count):
@@ -361,7 +446,79 @@ def chapter_meta(title, author, chapters):
     return "\n".join(lines) + "\n"
 
 
-def build_m4b(about, got, into, bitrate="64k", names=None):
+KOKORO = "kokoro-tts"       # ~/.local/bin, Kokoro-82M on the CPU, faster than realtime
+# What separates the spoken opening, in seconds of real silence — the same numbers speech-webui
+# announces its own books with. Punctuation buys about a third of a second, which isn't enough
+# to read as "that was the title, this is the author": the title needs room to land, and the
+# author needs more, or chapter one starts on top of it.
+TITLE_PAUSE = 0.7
+AUTHOR_PAUSE = 1.6
+
+
+def stream_of(path, key):
+    """One property of a file's audio stream — its rate or its channel count."""
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0",
+                          "-show_entries", f"stream={key}", "-of", "default=nw=1:nk=1", path],
+                         capture_output=True, text=True, timeout=60)
+    return out.stdout.strip()
+
+
+def announcement(phrases, into, like, voice="af_heart"):
+    """A spoken opening, made here rather than found in the recording.
+
+    Plenty of audiobooks start straight into chapter one, and on a shelf of them that's a file
+    you have to remember rather than recognise. Kokoro reads the title, then the author.
+
+    `phrases` is [(what to say, silence after it)]. The silence is real rather than punctuation,
+    and it is the point of the thing: without it the two run together and the prologue lands on
+    top of the author's name.
+
+    Everything is given the tracks' own sample rate and channel count, because ffmpeg's concat
+    refuses a list whose inputs disagree — Kokoro's 24 kHz mono against a 44.1 kHz recording.
+    """
+    if not shutil.which(KOKORO):
+        sys.exit(f"{KOKORO} isn't installed, and it's what would say the title")
+    rate = stream_of(like, "sample_rate") or "44100"
+    channels = stream_of(like, "channels") or "1"
+    pieces = []
+    for n, (text, after) in enumerate(phrases):
+        raw = os.path.join(into, f".announcement-{n}.wav")
+        part = os.path.join(into, f".announcement-{n}.mp3")
+        print(f'Saying: "{text}" then {after}s', flush=True)
+        spoken = subprocess.run([KOKORO, text, "-o", raw, "-v", voice],
+                                capture_output=True, text=True, timeout=600)
+        if spoken.returncode != 0 or not os.path.exists(raw):
+            sys.exit(f"{KOKORO} failed:\n" + (spoken.stderr or spoken.stdout)[-400:])
+        # apad rather than a silence file of its own: it re-encodes this clip, so the padding
+        # can't disagree with what Kokoro produced and break the concat.
+        shaped = subprocess.run(["ffmpeg", "-nostdin", "-y", "-v", "error", "-i", raw,
+                                 "-af", f"apad=pad_dur={after}", "-ar", rate, "-ac", channels,
+                                 "-b:a", "128k", part], capture_output=True, text=True,
+                                timeout=600)
+        os.remove(raw)
+        if shaped.returncode != 0:
+            sys.exit("ffmpeg couldn't pad the announcement:\n" + shaped.stderr[-400:])
+        pieces.append(part)
+    if len(pieces) == 1:
+        return pieces[0]
+    # Joined into one file so the opening is one chapter mark rather than a title chapter and
+    # a nameless one after it. Same parameters throughout, so this is a copy, not an encode.
+    listing = os.path.join(into, ".announcement.txt")
+    said = os.path.join(into, ".announcement.mp3")
+    with open(listing, "w") as f:
+        f.writelines(concat_line(os.path.abspath(p)) for p in pieces)
+    joined = subprocess.run(["ffmpeg", "-nostdin", "-y", "-v", "error", "-f", "concat",
+                             "-safe", "0", "-i", listing, "-c", "copy", said],
+                            capture_output=True, text=True, timeout=600)
+    for scratch in pieces + [listing]:
+        os.remove(scratch)
+    if joined.returncode != 0:
+        sys.exit("ffmpeg couldn't join the announcement:\n" + joined.stderr[-400:])
+    return said
+
+
+def build_m4b(about, got, into, bitrate="64k", names=None, opening=False,
+              voice="af_heart"):
     """One .m4b out of the tracks: chapter marks, cover, and the metadata a player reads.
 
     Mono at 64 kbps. The source is one voice reading, so the channels carry the same thing and
@@ -376,6 +533,13 @@ def build_m4b(about, got, into, bitrate="64k", names=None):
     building = out + ".part"                   # renamed when whole, never half an audiobook
     print(f"\nMeasuring {len(got)} tracks…", flush=True)
     titles = read_names(names, len(got)) if names else [name for _p, name in got]
+    if opening:
+        # After the names are counted, so a --names file still describes the book's own tracks
+        # and not this. One chapter mark for the lot of it: it's an opening, not a chapter.
+        author = about.get("creator")
+        phrases = [(title, TITLE_PAUSE)] + ([(f"by {author}", AUTHOR_PAUSE)] if author else [])
+        said = announcement(phrases, into, got[0][0], voice)
+        got, titles = [(said, title)] + list(got), [title] + list(titles)
     chapters = [(title, seconds_of(path)) for title, (path, _n) in zip(titles, got)]
     listing = os.path.join(into, "concat.txt")
     metafile = os.path.join(into, "chapters.txt")
@@ -401,8 +565,9 @@ def build_m4b(about, got, into, bitrate="64k", names=None):
     if r.returncode != 0 or not os.path.exists(building):
         sys.exit("ffmpeg failed:\n" + (r.stderr or "")[-600:])
     os.replace(building, out)
-    for scratch in (listing, metafile):
-        os.remove(scratch)
+    for scratch in [listing, metafile] + glob.glob(os.path.join(into, ".announcement*")):
+        if os.path.exists(scratch):
+            os.remove(scratch)
     print(f"\n{out}\n{len(chapters)} chapters, {round(os.path.getsize(out) / 1e6)} MB")
     return out
 
@@ -418,6 +583,9 @@ def main(argv=None):
     found.add_argument("--collection", default=COLLECTION,
                        help=f"archive.org collection to look in (default: {COLLECTION}; "
                             f'"any" searches all audio)')
+    tidied = sub.add_parser("sort", help="split a folder of mixed books into one folder each")
+    tidied.add_argument("folder")
+    tidied.add_argument("--apply", action="store_true", help="actually move them")
     packed = sub.add_parser("pack", help="make an .m4b from a folder of audio you already have")
     packed.add_argument("folder")
     packed.add_argument("--names", metavar="FILE",
@@ -425,6 +593,10 @@ def main(argv=None):
     packed.add_argument("--title", help="default: the folder's name")
     packed.add_argument("--author", help="default: whatever the first track's tags say")
     packed.add_argument("--bitrate", default="64k", help="AAC bitrate (default: 64k mono)")
+    packed.add_argument("--announce", action="store_true",
+                   help="open with the title and author, spoken by Kokoro")
+    packed.add_argument("--voice", default="af_heart",
+                   help="Kokoro voice for --announce (default: af_heart)")
     packed.add_argument("--upload", action="store_true",
                         help=f"put it in Proton Drive at {PROTON_DEST}")
     packed.add_argument("--dest", help="a different Proton Drive folder")
@@ -437,14 +609,21 @@ def main(argv=None):
         p.add_argument("--format", dest="fmt", help=f"one of {', '.join(FORMATS)}")
         if name == "m4b":
             p.add_argument("--bitrate", default="64k", help="AAC bitrate (default: 64k mono)")
+            p.add_argument("--announce", action="store_true",
+                           help="open with the title and author, spoken by Kokoro")
+            p.add_argument("--voice", default="af_heart",
+                           help="Kokoro voice for --announce (default: af_heart)")
             p.add_argument("--names", metavar="FILE",
                            help="chapter names, one per line, in place of the tracks' own")
         p.add_argument("--upload", action="store_true",
                        help=f"put it in Proton Drive at {PROTON_DEST}")
         p.add_argument("--dest", help="a different Proton Drive folder")
     args = parser.parse_args(argv)
-    if args.command == "pack":
-        book = pack(args.folder, args.names, args.title, args.author, args.bitrate)
+    if args.command == "sort":
+        sort_folder(args.folder, args.apply)
+    elif args.command == "pack":
+        book = pack(args.folder, args.names, args.title, args.author, args.bitrate,
+                    args.announce, args.voice)
         if args.upload:
             upload([book], args.dest)
     elif args.command == "names":
@@ -470,7 +649,8 @@ def main(argv=None):
         into = os.path.join(os.path.expanduser(args.dir), identifier)
         about, got = fetch(identifier, into, args.fmt)
         if args.command == "m4b":
-            book = build_m4b(about, got, into, args.bitrate, args.names)
+            book = build_m4b(about, got, into, args.bitrate, args.names,
+                             args.announce, args.voice)
             if args.upload:
                 upload([book], args.dest)
         else:

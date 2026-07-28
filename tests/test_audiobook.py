@@ -320,8 +320,9 @@ class TestPackingAFolderYouAlreadyHave:
         """Stand in for the encode, and answer for the tags, so nothing runs ffmpeg."""
         seen = {}
 
-        def build(about, got, into, bitrate="64k", names=None):
-            seen.update(about=about, got=got, into=into, names=names)
+        def build(about, got, into, bitrate="64k", names=None, opening=False,
+                  voice="af_heart"):
+            seen.update(about=about, got=got, into=into, names=names, opening=opening)
             return os.path.join(into, "out.m4b")
 
         monkeypatch.setattr(audiobook, "build_m4b", build)
@@ -360,6 +361,14 @@ class TestPackingAFolderYouAlreadyHave:
         audiobook.pack(folder)
         assert [os.path.basename(p) for p, _n in seen["got"]] == ["01 one.mp3"]
 
+    def test_and_its_own_scratch(self, monkeypatch, tmp_path):
+        """An announcement left behind by a killed run was picked up as track 55 of a
+        54-track book, and the names file was blamed for it."""
+        folder = self.make(tmp_path, "01 one.mp3", ".announcement.mp3")
+        seen = self.caught(monkeypatch)
+        audiobook.pack(folder)
+        assert [os.path.basename(p) for p, _n in seen["got"]] == ["01 one.mp3"]
+
     def test_a_folder_with_nothing_to_pack(self, tmp_path):
         with pytest.raises(SystemExit):
             audiobook.pack(str(tmp_path))
@@ -367,6 +376,64 @@ class TestPackingAFolderYouAlreadyHave:
     def test_a_folder_that_is_not_there(self):
         with pytest.raises(SystemExit):
             audiobook.pack("/no/such/folder")
+
+
+class TestTheSpokenOpening:
+    """Plenty of audiobooks start straight into chapter one, and on a shelf of them that's a
+    file you have to remember rather than recognise. Kokoro says the title."""
+
+    def spoke(self, monkeypatch, tmp_path):
+        """Kokoro and ffmpeg stand still; what's recorded is what each was asked for."""
+        said = {"texts": [], "voices": [], "pads": []}
+
+        def run(cmd, **kw):
+            if cmd[0] == audiobook.KOKORO:
+                said["texts"].append(cmd[1])
+                said["voices"].append(cmd[cmd.index("-v") + 1])
+                open(cmd[cmd.index("-o") + 1], "wb").write(b"\0")
+            elif cmd[0] == "ffmpeg":
+                if "-af" in cmd:
+                    said["pads"].append(cmd[cmd.index("-af") + 1])
+                open(cmd[-1], "wb").write(b"\0")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr(audiobook.shutil, "which", lambda tool: "/usr/bin/" + tool)
+        monkeypatch.setattr(audiobook.subprocess, "run", run)
+        monkeypatch.setattr(audiobook, "stream_of", lambda path, key: "44100")
+        return said
+
+    def test_it_says_the_title_then_the_author(self, monkeypatch, tmp_path):
+        said = self.spoke(monkeypatch, tmp_path)
+        audiobook.announcement([("A Book", audiobook.TITLE_PAUSE),
+                                ("by A Writer", audiobook.AUTHOR_PAUSE)],
+                               str(tmp_path), "track.mp3")
+        assert said["texts"] == ["A Book", "by A Writer"]
+
+    def test_the_silence_after_each_is_real(self, monkeypatch, tmp_path):
+        """Punctuation buys about a third of a second, which isn't enough to read as "that was
+        the title" — and without the second pause the prologue lands on the author's name."""
+        said = self.spoke(monkeypatch, tmp_path)
+        audiobook.announcement([("A Book", 0.7), ("by A Writer", 1.6)],
+                               str(tmp_path), "track.mp3")
+        assert said["pads"] == ["apad=pad_dur=0.7", "apad=pad_dur=1.6"]
+
+    def test_it_comes_out_as_one_file(self, monkeypatch, tmp_path):
+        """So the opening is one chapter mark, not a titled one and a nameless one."""
+        self.spoke(monkeypatch, tmp_path)
+        out = audiobook.announcement([("A Book", 0.7), ("by A Writer", 1.6)],
+                                     str(tmp_path), "track.mp3")
+        assert isinstance(out, str) and out.endswith(".announcement.mp3")
+
+    def test_another_voice(self, monkeypatch, tmp_path):
+        said = self.spoke(monkeypatch, tmp_path)
+        audiobook.announcement([("A Book", 0.7)], str(tmp_path), "track.mp3", voice="bm_george")
+        assert said["voices"] == ["bm_george"]
+
+    def test_without_kokoro_it_says_so(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(audiobook.shutil, "which", lambda tool: None)
+        with pytest.raises(SystemExit) as e:
+            audiobook.announcement([("A Book", 0.7)], str(tmp_path), "track.mp3")
+        assert audiobook.KOKORO in str(e.value)
 
 
 class TestPickingUpWhereItStopped:

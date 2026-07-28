@@ -66,6 +66,22 @@ sorting gets wrong the moment a folder isn't zero-padded. Chapter names are the 
 comes off the first track's tags unless `--author` does. Its own `.m4b` and any half-downloaded
 `.part` are left out, so running it twice doesn't pack the last result into the next one.
 
+## Saying the title
+
+`--announce` opens the book with its title and author, read by
+[Kokoro](https://github.com/hexgrad/kokoro) on the CPU — for recordings that start straight into
+chapter one, which on a shelf of them is a file you have to remember rather than recognise. It
+becomes the first chapter, so it's one tap to skip.
+
+```bash
+./audiobook.py pack "~/Audiobooks/Some Book" --announce --voice bm_george
+```
+
+Needs the `kokoro-tts` command; without it, it says so rather than quietly skipping. The line is
+given the tracks' own sample rate and channel count, because ffmpeg's concat refuses a list whose
+inputs disagree — Kokoro's 24 kHz mono against a 44.1 kHz recording. And it's added after a
+`--names` file is counted, so that file still describes the book's own tracks.
+
 ## Chapter names
 
 The chapter list comes from each track's own title, which for a LibriVox reading is usually
