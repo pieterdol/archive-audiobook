@@ -19,6 +19,8 @@ import argparse
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import time
 import urllib.error
@@ -146,6 +148,7 @@ def download(url, path, size):
 
 
 def fetch(identifier, into, want=None):
+    """Download the item's tracks. -> (what the item says about itself, [(path, title)])."""
     meta = get_json(f"{ARCHIVE}/metadata/{identifier}")
     if not meta.get("files"):
         sys.exit(f"no such item: {identifier}")
@@ -158,14 +161,108 @@ def fetch(identifier, into, want=None):
     print(f"{about.get('licenseurl') or 'no licence stated'}")
     print(f"{len(chosen)} tracks, {fmt}, {round(total / 1e6)} MB → {into}\n")
     os.makedirs(into, exist_ok=True)
+    got = []
     for i, f in enumerate(chosen, start=1):
         name = filename(i, f)
         url = f"{ARCHIVE}/download/{identifier}/{urllib.parse.quote(f['name'])}"
-        made = download(url, os.path.join(into, name), int(f.get("size") or 0))
+        path = os.path.join(into, name)
+        made = download(url, path, int(f.get("size") or 0))
         print(f"  {'✓' if made else '·'} {name}", flush=True)
+        got.append((path, os.path.splitext(name)[0][3:] or name))
         if made and i < len(chosen):
             time.sleep(PAUSE)          # a book is a couple of hundred megabytes in one go
-    print(f"\nDone. Import the folder into BookPlayer — it keeps the order from the names.")
+    if picture := cover_file(meta["files"]):
+        url = f"{ARCHIVE}/download/{identifier}/{urllib.parse.quote(picture['name'])}"
+        download(url, os.path.join(into, "cover.jpg"), int(picture.get("size") or 0))
+    return about, got
+
+
+def cover_file(files):
+    """The item's artwork, or None. The full JPEG where there is one; the thumbnail is 180px
+    and looks it on a phone."""
+    for want in ("JPEG", "Item Tile", "JPEG Thumb"):
+        for f in files:
+            if f.get("format") == want and f.get("name", "").lower().endswith((".jpg", ".jpeg")):
+                return f
+    return None
+
+
+def seconds_of(path):
+    """How long a track actually is, asked of the file rather than taken from the listing:
+    the chapter marks are only as good as this, and the listing's length is a rounded string."""
+    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                          "-of", "default=nw=1:nk=1", path],
+                         capture_output=True, text=True, timeout=120)
+    try:
+        return float(out.stdout.strip())
+    except ValueError:
+        sys.exit(f"ffprobe couldn't read {path}")
+
+
+def concat_line(path):
+    """One line of ffmpeg's concat list. It quotes with single quotes, so a quote inside the
+    name has to be escaped or the path ends early — "15 The Time Traveller's Return.mp3"."""
+    return "file '" + path.replace("'", r"'\''") + "'\n"
+
+
+def chapter_meta(title, author, chapters):
+    """FFMETADATA naming the whole and marking each track, in milliseconds from the start.
+
+    A chapter ends where the next begins rather than at its own length, so a rounding error
+    can't leave a gap that a player reads as a hole in the book.
+    """
+    lines = [";FFMETADATA1", f"title={title}", f"album={title}", f"artist={author}",
+             "genre=Audiobook"]
+    at = 0.0
+    for name, length in chapters:
+        lines += ["[CHAPTER]", "TIMEBASE=1/1000", f"START={int(at * 1000)}",
+                  f"END={int((at + length) * 1000)}", f"title={name}"]
+        at += length
+    return "\n".join(lines) + "\n"
+
+
+def build_m4b(about, got, into, bitrate="64k"):
+    """One .m4b out of the tracks: chapter marks, cover, and the metadata a player reads.
+
+    Mono at 64 kbps. The source is one voice reading, so the channels carry the same thing and
+    the bitrate is generous for speech — 188 MB of MP3 comes out around 95 MB, which matters on
+    a phone.
+    """
+    for tool in ("ffmpeg", "ffprobe"):
+        if not shutil.which(tool):
+            sys.exit(f"{tool} isn't installed, and it's what makes the .m4b")
+    title = str(about.get("title") or "audiobook")
+    out = os.path.join(into, re.sub(r"[^\w \-.,'()]+", " ", title).strip()[:120] + ".m4b")
+    building = out + ".part"                   # renamed when whole, never half an audiobook
+    print(f"\nMeasuring {len(got)} tracks…", flush=True)
+    chapters = [(name, seconds_of(path)) for path, name in got]
+    listing = os.path.join(into, "concat.txt")
+    metafile = os.path.join(into, "chapters.txt")
+    with open(listing, "w") as f:
+        f.writelines(concat_line(os.path.abspath(p)) for p, _ in got)
+    with open(metafile, "w") as f:
+        f.write(chapter_meta(title, str(about.get("creator") or ""), chapters))
+    cover = os.path.join(into, "cover.jpg")
+    cmd = ["ffmpeg", "-nostdin", "-y", "-f", "concat", "-safe", "0", "-i", listing,
+           "-i", metafile]
+    if os.path.exists(cover):
+        cmd += ["-i", cover]
+    cmd += ["-map", "0:a", "-map_metadata", "1"]
+    if os.path.exists(cover):
+        # attached_pic is what makes a player show it as the book's artwork
+        cmd += ["-map", "2:v", "-c:v", "copy", "-disposition:v:0", "attached_pic"]
+    # -f ipod names the muxer the .m4b extension would have picked; the .part name can't.
+    cmd += ["-c:a", "aac", "-b:a", bitrate, "-ac", "1", "-movflags", "+faststart",
+            "-f", "ipod", building]
+    hours = round(sum(length for _n, length in chapters) / 3600, 1)
+    print(f"Encoding {hours} h to AAC {bitrate} mono — a few minutes…", flush=True)
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
+    if r.returncode != 0 or not os.path.exists(building):
+        sys.exit("ffmpeg failed:\n" + (r.stderr or "")[-600:])
+    os.replace(building, out)
+    for scratch in (listing, metafile):
+        os.remove(scratch)
+    print(f"\n{out}\n{len(chapters)} chapters, {round(os.path.getsize(out) / 1e6)} MB")
 
 
 def main(argv=None):
@@ -173,18 +270,28 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
     found = sub.add_parser("search", help="find a recording by title")
     found.add_argument("words", nargs="+")
-    got = sub.add_parser("get", help="download one, by the identifier search prints")
-    got.add_argument("identifier")
-    got.add_argument("--dir", default="audiobooks", help="where to put it (default: audiobooks/)")
-    got.add_argument("--format", dest="fmt", help=f"one of {', '.join(FORMATS)}")
+    for name, help_text in (("get", "download one, by the identifier search prints"),
+                            ("m4b", "download it and make one .m4b with chapter marks")):
+        p = sub.add_parser(name, help=help_text)
+        p.add_argument("identifier")
+        p.add_argument("--dir", default="audiobooks",
+                       help="where to put it (default: audiobooks/)")
+        p.add_argument("--format", dest="fmt", help=f"one of {', '.join(FORMATS)}")
+        if name == "m4b":
+            p.add_argument("--bitrate", default="64k", help="AAC bitrate (default: 64k mono)")
     args = parser.parse_args(argv)
     if args.command == "search":
         for d in search(args.words):
             print(f"{d['identifier']:<40} {str(d.get('runtime') or '?'):>9}  "
                   f"{str(d.get('title'))[:38]:<40} {str(d.get('creator') or '')[:24]}")
     else:
-        fetch(args.identifier, os.path.join(os.path.expanduser(args.dir), args.identifier),
-              args.fmt)
+        into = os.path.join(os.path.expanduser(args.dir), args.identifier)
+        about, got = fetch(args.identifier, into, args.fmt)
+        if args.command == "m4b":
+            build_m4b(about, got, into, args.bitrate)
+        else:
+            print("\nDone. Import the folder into BookPlayer — it keeps the order "
+                  "from the names.")
 
 
 if __name__ == "__main__":

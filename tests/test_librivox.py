@@ -147,6 +147,53 @@ class TestWaitingOutARefusal:
         assert waits == [30]                    # not the backoff it would have chosen
 
 
+class TestTheM4b:
+    """One file with chapter marks, which is what a player wants of an audiobook. ffmpeg does
+    the encoding; what's tested is what it's told."""
+
+    def test_a_quote_in_a_name_does_not_end_the_path(self):
+        """ffmpeg's concat list quotes with single quotes, and a reader called a chapter
+        "The Time Traveller's Return"."""
+        line = librivox.concat_line("/books/15 The Traveller's Return.mp3")
+        assert line == "file '/books/15 The Traveller'\\''s Return.mp3'\n"
+
+    def test_an_ordinary_name_is_quoted_plainly(self):
+        assert librivox.concat_line("/books/01 Intro.mp3") == "file '/books/01 Intro.mp3'\n"
+
+    def test_the_marks_run_end_to_end(self):
+        meta = librivox.chapter_meta("A Book", "A Reader",
+                                     [("One", 60.0), ("Two", 30.5), ("Three", 9.5)])
+        starts = [l for l in meta.splitlines() if l.startswith("START=")]
+        ends = [l for l in meta.splitlines() if l.startswith("END=")]
+        assert starts == ["START=0", "START=60000", "START=90500"]
+        assert ends == ["END=60000", "END=90500", "END=100000"]
+
+    def test_no_gap_between_chapters(self):
+        """A chapter ends where the next starts, so rounding can't leave a hole in the book."""
+        meta = librivox.chapter_meta("A Book", "", [("One", 1.0004), ("Two", 1.0004),
+                                                    ("Three", 1.0004)])
+        starts = [l.removeprefix("START=") for l in meta.splitlines() if l.startswith("START=")]
+        ends = [l.removeprefix("END=") for l in meta.splitlines() if l.startswith("END=")]
+        assert ends[:-1] == starts[1:]
+
+    def test_it_says_whose_book_it_is(self):
+        meta = librivox.chapter_meta("A Book", "A Reader", [("One", 1.0)])
+        assert "title=A Book" in meta and "artist=A Reader" in meta
+        assert "genre=Audiobook" in meta
+
+    def test_the_artwork_is_the_full_one_not_the_thumbnail(self):
+        files = [{"name": "__ia_thumb.jpg", "format": "JPEG Thumb"},
+                 {"name": "cover.jpg", "format": "JPEG"}]
+        assert librivox.cover_file(files)["name"] == "cover.jpg"
+
+    def test_an_item_with_no_artwork(self):
+        assert librivox.cover_file([{"name": "a.mp3", "format": "VBR MP3"}]) is None
+
+    def test_a_png_named_as_a_jpeg_entry_is_not_taken(self):
+        """The spectrograms archive generates are PNGs filed under a JPEG-ish format."""
+        assert librivox.cover_file([{"name": "spectrogram.png", "format": "JPEG"}]) is None
+
+
 class TestTrackNumber:
     def test_it_reads_the_first_half(self):
         assert librivox.track_number({"track": "3/12"}) == 3

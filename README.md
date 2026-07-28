@@ -8,12 +8,30 @@ Standard library only. No install, no venv, no dependencies.
 ```bash
 ./librivox.py search the time machine
 ./librivox.py get time_machine_ms_librivox
-./librivox.py get time_machine_ms_librivox --dir ~/Audiobooks --format "64Kbps MP3"
+./librivox.py m4b time_machine_ms_librivox
+./librivox.py m4b time_machine_ms_librivox --dir ~/Audiobooks --format "64Kbps MP3" --bitrate 48k
 ```
 
 `search` matches words against the title within archive.org's LibriVox collection and prints the
 identifier, the runtime, the title and the reader's source author. `get` takes one of those
-identifiers and downloads it to `audiobooks/<identifier>/`.
+identifiers and downloads it to `audiobooks/<identifier>/`. `m4b` does the same and then builds
+one audiobook file out of the tracks.
+
+## The .m4b
+
+A folder of MP3s plays fine, but one `.m4b` is what an audiobook player expects: a single file
+that remembers where you were, with a chapter list, artwork and the author's name in it. It needs
+ffmpeg.
+
+One chapter per track, named as the track is, with each chapter ending exactly where the next
+begins so a rounding error can't leave a hole. Lengths are measured with ffprobe rather than taken
+from the listing, whose lengths are rounded strings. The item's artwork is embedded if it has any.
+
+AAC at 64 kbps mono — the source is one voice, so the channels carry the same thing, and 188 MB of
+MP3 came out at 104 MB for three and a half hours. `--bitrate` if you disagree.
+
+The tracks are kept alongside it. Building writes to a `.part` and renames when it's whole, so an
+interrupted encode never leaves something that looks like an audiobook.
 
 ## What it does with the files
 
