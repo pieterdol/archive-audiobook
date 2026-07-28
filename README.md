@@ -10,8 +10,13 @@ Standard library only. No install, no venv, no dependencies.
 ./librivox.py get time_machine_ms_librivox
 ./librivox.py m4b time_machine_ms_librivox
 ./librivox.py m4b time_machine_ms_librivox --upload
+./librivox.py m4b https://archive.org/download/time_machine_ms_librivox
 ./librivox.py m4b time_machine_ms_librivox --dir ~/Audiobooks --format "64Kbps MP3" --bitrate 48k
 ```
+
+Anywhere an identifier is wanted, an archive.org URL will do — `/details/`, `/download/` or
+`/metadata/`, with or without a file after it, since the identifier sits in the same place in all
+of them. A URL naming one track still fetches the whole recording.
 
 `search` matches words against the title within archive.org's LibriVox collection and prints the
 identifier, the runtime, the title and the reader's source author. `get` takes one of those
@@ -77,3 +82,6 @@ whether the book plays in order.
 ```bash
 python3 -m pytest          # or any interpreter with pytest
 ```
+
+From anywhere, too — `conftest.py` puts the script on the path, which it needs since there's no
+package to install.

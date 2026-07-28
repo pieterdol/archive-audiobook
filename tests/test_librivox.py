@@ -20,6 +20,40 @@ VBR = [{"name": "book_03_wells.mp3", "format": "VBR MP3", "track": "3/3", "title
 SMALL = [dict(f, format="64Kbps MP3") for f in VBR]
 
 
+class TestNamingTheItem:
+    """A URL is what you have in your hand after finding a recording; the identifier is buried
+    in it, in the same place on every page archive.org has for an item."""
+
+    @pytest.mark.parametrize("text", [
+        "time_machine_ms_librivox",
+        "https://archive.org/download/time_machine_ms_librivox",
+        "https://archive.org/download/time_machine_ms_librivox/",
+        "https://archive.org/details/time_machine_ms_librivox",
+        "https://archive.org/metadata/time_machine_ms_librivox",
+        "archive.org/details/time_machine_ms_librivox?start=3#play",
+        "  https://archive.org/download/time_machine_ms_librivox  ",
+    ])
+    def test_every_way_of_naming_the_same_item(self, text):
+        assert librivox.identifier_of(text) == "time_machine_ms_librivox"
+
+    def test_a_url_pointing_at_one_track_still_means_the_book(self):
+        """This fetches recordings, not tracks."""
+        assert librivox.identifier_of(
+            "https://archive.org/download/an_item/track_01.mp3") == "an_item"
+
+    def test_an_escaped_character_comes_back(self):
+        assert librivox.identifier_of("https://archive.org/details/an%20item") == "an item"
+
+    @pytest.mark.parametrize("text", [
+        "https://example.com/download/an_item",
+        "https://archive.org/search?query=wells",
+        "some/path/somewhere",
+    ])
+    def test_something_that_names_no_item(self, text):
+        with pytest.raises(SystemExit):
+            librivox.identifier_of(text)
+
+
 class TestChoosingTheTracks:
     def test_playing_order_not_listing_order(self):
         _fmt, got = librivox.tracks(VBR)

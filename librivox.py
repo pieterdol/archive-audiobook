@@ -8,6 +8,7 @@ listing.
     ./librivox.py search the time machine
     ./librivox.py get time_machine_ms_librivox
     ./librivox.py m4b time_machine_ms_librivox --upload
+    ./librivox.py m4b https://archive.org/download/time_machine_ms_librivox
 
 Two calls do the work: /metadata/<id> lists an item's files, /download/<id>/<file> fetches one.
 LibriVox recordings are public domain; the licence of the item it found is printed before
@@ -43,6 +44,8 @@ PAUSE = 1            # between tracks, since a book is a couple of hundred megab
 # uploads, it doesn't build a tree.
 PROTON = os.path.expanduser("~/.local/bin/proton-drive")
 PROTON_DEST = os.environ.get("PROTON_DEST", "/my-files/Audiobooks")
+# An item's identifier sits in the same place in every URL archive.org has for it.
+_ITEM_URL = re.compile(r"archive\.org/(?:download|details|metadata|embed|stream|serve)/([^/?#]+)")
 
 
 def _wait(seconds, why):
@@ -84,6 +87,23 @@ def search(words, rows=8):
            "&fl%5B%5D=identifier&fl%5B%5D=title&fl%5B%5D=creator&fl%5B%5D=runtime"
            f"&rows={rows}&output=json")
     return get_json(url)["response"]["docs"]
+
+
+def identifier_of(text):
+    """The item's identifier, from itself or from any archive.org URL that names one.
+
+    Every page of an item has it in the same place — /details/ for the page you land on,
+    /download/ for the file listing, /metadata/ for the JSON — so the path after that word is
+    what's wanted. A URL pointing at one file inside the item still means the whole book: this
+    fetches recordings, not tracks.
+    """
+    text = (text or "").strip().strip("<>")
+    found = _ITEM_URL.search(text)
+    if found:
+        return urllib.parse.unquote(found.group(1))
+    if "/" in text or text.lower().startswith("http"):
+        sys.exit(f"that doesn't name an archive.org item: {text}")
+    return text
 
 
 def track_number(f):
@@ -300,7 +320,7 @@ def main(argv=None):
     for name, help_text in (("get", "download one, by the identifier search prints"),
                             ("m4b", "download it and make one .m4b with chapter marks")):
         p = sub.add_parser(name, help=help_text)
-        p.add_argument("identifier")
+        p.add_argument("identifier", help="the identifier, or any archive.org URL for it")
         p.add_argument("--dir", default="audiobooks",
                        help="where to put it (default: audiobooks/)")
         p.add_argument("--format", dest="fmt", help=f"one of {', '.join(FORMATS)}")
@@ -315,8 +335,9 @@ def main(argv=None):
             print(f"{d['identifier']:<40} {str(d.get('runtime') or '?'):>9}  "
                   f"{str(d.get('title'))[:38]:<40} {str(d.get('creator') or '')[:24]}")
     else:
-        into = os.path.join(os.path.expanduser(args.dir), args.identifier)
-        about, got = fetch(args.identifier, into, args.fmt)
+        identifier = identifier_of(args.identifier)
+        into = os.path.join(os.path.expanduser(args.dir), identifier)
+        about, got = fetch(identifier, into, args.fmt)
         if args.command == "m4b":
             book = build_m4b(about, got, into, args.bitrate)
             if args.upload:
