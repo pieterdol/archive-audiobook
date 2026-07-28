@@ -31,9 +31,12 @@ class TestSearching:
     def test_another_collection(self):
         assert audiobook.search_query(["x"], "oldtimeradio").startswith("collection:oldtimeradio")
 
-    @pytest.mark.parametrize("widen", ["any", "", None])
+    @pytest.mark.parametrize("widen", ["any", "all", "audio", "Any", "*", "", None])
     def test_widening_it_still_means_audio(self, widen):
-        """Or the answers are films and texts, which no amount of MP3-picking will fix."""
+        """Or the answers are films and texts, which no amount of MP3-picking will fix.
+
+        "audio" is among the words because it's the obvious guess, and it is not a collection
+        anything sits in directly — asked for as one it found nothing at all."""
         assert audiobook.search_query(["x"], widen).startswith("mediatype:audio")
 
 

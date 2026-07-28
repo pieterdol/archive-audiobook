@@ -25,8 +25,12 @@ of them. A URL naming one track still fetches the whole recording.
 `search` matches words against the title and prints the identifier, the runtime, the title and the
 author. It looks in `librivoxaudio` because archive.org holds everything: the same words unfiltered
 come back as film trailers and scanned copies of the book, and audio alone still returns radio
-plays, a remastered film score and podcast episodes. `--collection` looks elsewhere, and
-`--collection any` widens it to all audio. `get` takes one of those
+plays, a remastered film score and podcast episodes. `--collection` looks elsewhere, and `--collection any` widens it to
+everything archive.org files as audio — as do `all` and `audio`, since those are the obvious
+guesses and none of them is a collection anything actually sits in.
+
+A search that matches nothing says so, and says where it looked. Printing nothing at all reads as
+"no such book" when it's just as likely to be a collection that doesn't exist. `get` takes one of those
 identifiers and downloads it to `audiobooks/<identifier>/`. `m4b` does the same and then builds
 one audiobook file out of the tracks.
 

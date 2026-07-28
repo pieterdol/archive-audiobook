@@ -38,6 +38,10 @@ FORMATS = ["VBR MP3", "128Kbps MP3", "64Kbps MP3"]
 # radio plays, a remastered film score and podcast episodes. librivoxaudio is the shelf of books
 # read aloud by volunteers, which is the one worth searching. "any" widens it to all audio.
 COLLECTION = "librivoxaudio"
+# Ways of saying "don't scope it to a collection". "audio" is in here because it's the obvious
+# guess and it is *not* a collection anything sits in directly — asking for it found nothing at
+# all, which reads as "no such book".
+ANY = {"any", "all", "audio", "*", ""}
 # What archive.org answers when it's had enough of you. 460 is its own, undocumented and not a
 # broken file — the same URL serves in full a few seconds later, which is how a book fell over
 # on track 15 of 17. 429 and the 5xx family mean the same thing here.
@@ -87,7 +91,8 @@ def get_json(url):
 
 def search_query(words, collection=COLLECTION):
     """The lucene query: some words of a title, inside one collection or across all audio."""
-    scope = f"collection:{collection}" if collection and collection != "any" else "mediatype:audio"
+    scope = ("mediatype:audio" if not collection or collection.strip().lower() in ANY
+             else f"collection:{collection}")
     return f'{scope} AND title:("{" ".join(words)}")'
 
 
@@ -345,9 +350,17 @@ def main(argv=None):
         p.add_argument("--dest", help="a different Proton Drive folder")
     args = parser.parse_args(argv)
     if args.command == "search":
-        for d in search(args.words, collection=args.collection):
+        found = search(args.words, collection=args.collection)
+        for d in found:
             print(f"{d['identifier']:<40} {str(d.get('runtime') or '?'):>9}  "
                   f"{str(d.get('title'))[:38]:<40} {str(d.get('creator') or '')[:24]}")
+        if not found:
+            # Nothing printed at all reads as "no such book", when it is just as likely to be
+            # a collection nothing is in — which is what --collection audio turned out to be.
+            where = ("all audio" if not args.collection or args.collection.lower() in ANY
+                     else f"collection:{args.collection}")
+            print(f"Nothing in {where} with that in the title."
+                  + ("" if where == "all audio" else "  Try --collection any."))
     else:
         identifier = identifier_of(args.identifier)
         into = os.path.join(os.path.expanduser(args.dir), identifier)
