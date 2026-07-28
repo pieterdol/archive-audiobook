@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Fetch a LibriVox recording off archive.org, as a folder of MP3s for BookPlayer.
 
-Nothing to do with the app — it makes no audio and touches no library. It's here because
-getting a human-read public-domain audiobook onto the phone is the other half of the same
-job, and a folder of numbered tracks is what BookPlayer imports.
+A folder of numbered tracks is what BookPlayer imports, and LibriVox is where the human-read
+public-domain recordings are. This makes no audio of its own and reads nothing but the item
+listing.
 
     ./librivox.py search the time machine
     ./librivox.py get time_machine_ms_librivox
@@ -20,6 +20,8 @@ import json
 import os
 import re
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -28,10 +30,44 @@ AGENT = {"User-Agent": "librivox-fetch (personal use)"}
 # Best first. VBR is what LibriVox uploads; the fixed-rate ones are archive.org's derivatives,
 # and 64 kbps of a single voice reading is perfectly listenable at a third of the size.
 FORMATS = ["VBR MP3", "128Kbps MP3", "64Kbps MP3"]
+# What archive.org answers when it's had enough of you. 460 is its own, undocumented and not a
+# broken file — the same URL serves in full a few seconds later, which is how a book fell over
+# on track 15 of 17. 429 and the 5xx family mean the same thing here.
+BUSY = {429, 460, 500, 502, 503, 504}
+TRIES = 5
+BACKOFF = 4          # seconds, doubling: 4, 8, 16, 32
+PAUSE = 1            # between tracks, since a book is a couple of hundred megabytes in one go
+
+
+def _wait(seconds, why):
+    print(f"    … {why}, waiting {seconds}s", flush=True)
+    time.sleep(seconds)
+
+
+def open_url(url, timeout=60):
+    """The response, waiting out a refusal rather than giving up on it.
+
+    Retry-After is honoured where it's sent; where it isn't the wait doubles. A code that isn't
+    about being busy — a 404 for a file that has moved — is raised at once, since waiting won't
+    make it appear.
+    """
+    for attempt in range(TRIES):
+        try:
+            return urllib.request.urlopen(urllib.request.Request(url, headers=AGENT),
+                                          timeout=timeout)
+        except urllib.error.HTTPError as e:
+            if e.code not in BUSY or attempt == TRIES - 1:
+                raise
+            delay = int(e.headers.get("Retry-After") or 0) or BACKOFF * 2 ** attempt
+            _wait(delay, f"archive.org said {e.code}")
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            if attempt == TRIES - 1:
+                raise
+            _wait(BACKOFF * 2 ** attempt, f"{type(e).__name__}")
 
 
 def get_json(url):
-    with urllib.request.urlopen(urllib.request.Request(url, headers=AGENT), timeout=60) as r:
+    with open_url(url) as r:
         return json.load(r)
 
 
@@ -70,23 +106,41 @@ def filename(index, f):
     Numbered from the position in the list rather than from the item's own track numbers,
     which are sometimes missing and occasionally start at zero, and zero-padded because a
     player sorting names alphabetically puts 10 before 2.
+
+    Plenty of readers number their titles too — "01 - Introduction" — and prefixing that gives
+    "01 01 - Introduction". The leading number comes off, but only when it is this track's own:
+    a chapter called "1984" keeps its name.
     """
     title = re.sub(r"[^\w \-.,'()]+", " ", str(f.get("title") or "")).strip()
     title = re.sub(r"\s{2,}", " ", title)
+    already = re.match(r"(\d{1,3})(?!\d)\s*[-–—.:)]*\s*", title)
+    if already and int(already.group(1)) in (index, track_number(f)):
+        title = title[already.end():].strip()
     stem = f"{index:02d} {title}" if title else f"{index:02d} {f['name'].rsplit('.', 1)[0]}"
     return stem[:120] + os.path.splitext(f["name"])[1]
 
 
 def download(url, path, size):
     """One track, skipping it when it's already here whole — an interrupted run resumes by
-    being run again."""
+    being run again.
+
+    The retry here is for a connection that dies part way through the body, which open_url
+    can't see: it hands back a response that fails later. Whatever was written is thrown away
+    and the track fetched again from the start, since these are megabytes, not gigabytes.
+    """
     if os.path.exists(path) and size and os.path.getsize(path) == size:
         return False
     tmp = path + ".part"
-    with urllib.request.urlopen(urllib.request.Request(url, headers=AGENT), timeout=300) as r, \
-            open(tmp, "wb") as out:
-        while chunk := r.read(1 << 16):
-            out.write(chunk)
+    for attempt in range(TRIES):
+        try:
+            with open_url(url, timeout=300) as r, open(tmp, "wb") as out:
+                while chunk := r.read(1 << 16):
+                    out.write(chunk)
+            break
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            if attempt == TRIES - 1:
+                raise
+            _wait(BACKOFF * 2 ** attempt, f"{type(e).__name__} part way through")
     os.replace(tmp, path)                 # so a half-written file is never mistaken for done
     return True
 
@@ -108,7 +162,9 @@ def fetch(identifier, into, want=None):
         name = filename(i, f)
         url = f"{ARCHIVE}/download/{identifier}/{urllib.parse.quote(f['name'])}"
         made = download(url, os.path.join(into, name), int(f.get("size") or 0))
-        print(f"  {'✓' if made else '·'} {name}")
+        print(f"  {'✓' if made else '·'} {name}", flush=True)
+        if made and i < len(chosen):
+            time.sleep(PAUSE)          # a book is a couple of hundred megabytes in one go
     print(f"\nDone. Import the folder into BookPlayer — it keeps the order from the names.")
 
 
