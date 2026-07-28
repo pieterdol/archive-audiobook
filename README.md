@@ -94,9 +94,15 @@ Tracks are named `01 Chapter 01.mp3`, numbered by position and zero-padded, beca
 sorting names alphabetically puts 10 before 2 — and numbered from the position rather than from
 the item's own track numbers, which are sometimes missing and occasionally start at zero.
 
-A run that's interrupted resumes by being run again: a track already there at its full size is
-skipped, and a partial download is written beside the real name until it's complete, so a
-half-written file is never mistaken for a finished one.
+## Stopping and carrying on
+
+Ctrl-C is fine. Run the same command again and it picks up: a track already there at its full
+size is skipped, and the one that was in flight carries on from the byte it stopped at, since
+archive.org serves ranges. Nothing is downloaded twice.
+
+A partial track is written beside the real name as `.part` until it's whole, so a half-written
+file is never mistaken for a finished one, and a track that arrives the wrong length is thrown
+away and fetched again rather than renamed into place.
 
 ## Licences
 

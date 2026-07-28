@@ -62,7 +62,7 @@ def _wait(seconds, why):
     time.sleep(seconds)
 
 
-def open_url(url, timeout=60):
+def open_url(url, timeout=60, extra=None):
     """The response, waiting out a refusal rather than giving up on it.
 
     Retry-After is honoured where it's sent; where it isn't the wait doubles. A code that isn't
@@ -71,8 +71,8 @@ def open_url(url, timeout=60):
     """
     for attempt in range(TRIES):
         try:
-            return urllib.request.urlopen(urllib.request.Request(url, headers=AGENT),
-                                          timeout=timeout)
+            return urllib.request.urlopen(
+                urllib.request.Request(url, headers=AGENT | (extra or {})), timeout=timeout)
         except urllib.error.HTTPError as e:
             if e.code not in BUSY or attempt == TRIES - 1:
                 raise
@@ -166,25 +166,39 @@ def download(url, path, size):
     """One track, skipping it when it's already here whole — an interrupted run resumes by
     being run again.
 
-    The retry here is for a connection that dies part way through the body, which open_url
-    can't see: it hands back a response that fails later. Whatever was written is thrown away
-    and the track fetched again from the start, since these are megabytes, not gigabytes.
+    A part-written track carries on where it stopped: archive.org serves byte ranges, so the
+    megabytes already here are asked for again only if the server ignores the range — which is
+    also how a connection that dies mid-body is picked up, since each attempt starts from
+    whatever is on disk.
     """
     if os.path.exists(path) and size and os.path.getsize(path) == size:
         return False
     tmp = path + ".part"
     for attempt in range(TRIES):
         try:
-            with open_url(url, timeout=300) as r, open(tmp, "wb") as out:
+            have = os.path.getsize(tmp) if os.path.exists(tmp) else 0
+            resuming = bool(size and 0 < have < size)
+            r = open_url(url, 300, {"Range": f"bytes={have}-"} if resuming else None)
+            # 206 means it honoured the range; a 200 is the whole file again, so start over
+            # rather than append the beginning of it to the middle.
+            resuming = resuming and getattr(r, "status", 200) == 206
+            if resuming:
+                print(f"    … carrying on from {round(have / 1e6, 1)} MB", flush=True)
+            with r, open(tmp, "ab" if resuming else "wb") as out:
                 while chunk := r.read(1 << 16):
                     out.write(chunk)
-            break
         except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
             if attempt == TRIES - 1:
                 raise
             _wait(BACKOFF * 2 ** attempt, f"{type(e).__name__} part way through")
-    os.replace(tmp, path)                 # so a half-written file is never mistaken for done
-    return True
+            continue
+        if not size or os.path.getsize(tmp) == size:
+            os.replace(tmp, path)         # so a half-written file is never mistaken for done
+            return True
+        os.remove(tmp)          # came back the wrong length: no salvaging it, fetch it clean
+        if attempt < TRIES - 1:
+            _wait(BACKOFF * 2 ** attempt, "that came back the wrong length")
+    sys.exit(f"{os.path.basename(path)} kept arriving the wrong length — try again later")
 
 
 def upload(paths, dest=None):
@@ -408,4 +422,9 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        # Ctrl-C during a book is expected, not a fault: the tracks already here are kept and
+        # the one in flight resumes from where it stopped.
+        sys.exit("\nStopped. Run the same command to carry on where it left off.")

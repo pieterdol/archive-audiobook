@@ -280,6 +280,79 @@ class TestNamingTheChapters:
         assert audiobook.read_names(path, 3)[0] == "Third"
 
 
+class Answer:
+    """Enough of an HTTP response to be read once and closed."""
+
+    def __init__(self, body, status=200):
+        self.body, self.status, self.read_once = body, status, False
+
+    def read(self, _n=None):
+        if self.read_once:
+            return b""
+        self.read_once = True
+        return self.body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+
+class TestPickingUpWhereItStopped:
+    """Ctrl-C during a book is expected. The tracks already here are skipped by their size, and
+    the one in flight resumes: archive.org serves byte ranges."""
+
+    def serve(self, monkeypatch, answer):
+        asked = []
+
+        def urlopen(request, timeout=None):
+            asked.append(request.headers)
+            return answer
+
+        monkeypatch.setattr(audiobook.urllib.request, "urlopen", urlopen)
+        return asked
+
+    def test_a_finished_track_is_not_fetched_again(self, monkeypatch, tmp_path):
+        done = tmp_path / "01 One.mp3"
+        done.write_bytes(b"x" * 10)
+        self.serve(monkeypatch, Answer(b"never asked for"))
+        assert audiobook.download("https://archive.org/x", str(done), 10) is False
+
+    def test_a_part_written_one_carries_on(self, monkeypatch, tmp_path):
+        path = tmp_path / "01 One.mp3"
+        (tmp_path / "01 One.mp3.part").write_bytes(b"aaaaa")
+        asked = self.serve(monkeypatch, Answer(b"bbbbb", status=206))
+        audiobook.download("https://archive.org/x", str(path), 10)
+        assert asked[0].get("Range") == "bytes=5-"
+        assert path.read_bytes() == b"aaaaabbbbb"          # appended, not restarted
+
+    def test_a_server_ignoring_the_range_starts_over(self, monkeypatch, tmp_path):
+        """A 200 is the whole file again, and appending that to the middle makes a mess."""
+        path = tmp_path / "01 One.mp3"
+        (tmp_path / "01 One.mp3.part").write_bytes(b"aaaaa")
+        self.serve(monkeypatch, Answer(b"0123456789", status=200))
+        audiobook.download("https://archive.org/x", str(path), 10)
+        assert path.read_bytes() == b"0123456789"
+
+    def test_nothing_on_disk_asks_for_no_range(self, monkeypatch, tmp_path):
+        path = tmp_path / "01 One.mp3"
+        asked = self.serve(monkeypatch, Answer(b"0123456789"))
+        audiobook.download("https://archive.org/x", str(path), 10)
+        assert "Range" not in asked[0]
+
+    def test_a_wrong_length_is_never_renamed_into_place(self, monkeypatch, tmp_path):
+        """Better to say so than to leave a truncated file looking like a finished track."""
+        path = tmp_path / "01 One.mp3"
+        monkeypatch.setattr(audiobook, "TRIES", 2)
+        monkeypatch.setattr(audiobook.time, "sleep", lambda s: None)
+        self.serve(monkeypatch, Answer(b"short"))
+        with pytest.raises(SystemExit) as e:
+            audiobook.download("https://archive.org/x", str(path), 10)
+        assert "wrong length" in str(e.value)
+        assert not path.exists() and not (tmp_path / "01 One.mp3.part").exists()
+
+
 class TestUploading:
     """What proton-drive is told. The upload itself is its business."""
 
