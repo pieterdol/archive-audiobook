@@ -2,3 +2,7 @@ audiobooks/
 __pycache__/
 *.pyc
 .pytest_cache/
+names.txt
+*.kate-swp
+*.swp
+*~
