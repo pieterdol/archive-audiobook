@@ -50,6 +50,24 @@ MP3 came out at 104 MB for three and a half hours. `--bitrate` if you disagree.
 The tracks are kept alongside it. Building writes to a `.part` and renames when it's whole, so an
 interrupted encode never leaves something that looks like an audiobook.
 
+## Chapter names
+
+The chapter list comes from each track's own title, which for a LibriVox reading is usually
+right. Where it isn't — tracks called `track 03`, or an item with no titles at all — write them:
+
+```bash
+./audiobook.py names some_item > names.txt   # what it would use now, one per line
+$EDITOR names.txt
+./audiobook.py m4b some_item --names names.txt
+```
+
+Blank lines and `#` comments are passed over. The count has to match the tracks: names quietly
+pairing off against the wrong ones would be worse than refusing, and off-by-one is exactly what
+happens when a reader's introduction is its own track.
+
+Open Library isn't an option for this, in case it looks like one — it carries descriptions, not
+tables of contents. Nothing in eighty editions of four classics had one.
+
 ## Proton Drive
 
 `--upload` puts the result in Proton Drive, which is how it reaches the phone without a cable:

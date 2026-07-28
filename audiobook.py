@@ -249,6 +249,25 @@ def cover_file(files):
     return None
 
 
+def read_names(path, count):
+    """Chapter names from a file, one per line, blank lines and # comments passed over.
+
+    Open Library has no table of contents to fetch — nothing in eighty editions of four
+    classics had one — and an item whose tracks are called "track 03" has nothing worth using
+    either, so the way to fix a chapter list is to write it.
+
+    The count has to match: names silently pairing off against the wrong tracks would be worse
+    than refusing, and off-by-one is exactly what happens when a reader's intro is a track.
+    """
+    with open(path) as f:
+        names = [line.strip() for line in f
+                 if line.strip() and not line.lstrip().startswith("#")]
+    if len(names) != count:
+        sys.exit(f"{path} has {len(names)} names for {count} tracks — "
+                 f"one per line, in playing order")
+    return names
+
+
 def seconds_of(path):
     """How long a track actually is, asked of the file rather than taken from the listing:
     the chapter marks are only as good as this, and the listing's length is a rounded string."""
@@ -283,7 +302,7 @@ def chapter_meta(title, author, chapters):
     return "\n".join(lines) + "\n"
 
 
-def build_m4b(about, got, into, bitrate="64k"):
+def build_m4b(about, got, into, bitrate="64k", names=None):
     """One .m4b out of the tracks: chapter marks, cover, and the metadata a player reads.
 
     Mono at 64 kbps. The source is one voice reading, so the channels carry the same thing and
@@ -297,7 +316,8 @@ def build_m4b(about, got, into, bitrate="64k"):
     out = os.path.join(into, re.sub(r"[^\w \-.,'()]+", " ", title).strip()[:120] + ".m4b")
     building = out + ".part"                   # renamed when whole, never half an audiobook
     print(f"\nMeasuring {len(got)} tracks…", flush=True)
-    chapters = [(name, seconds_of(path)) for path, name in got]
+    titles = read_names(names, len(got)) if names else [name for _p, name in got]
+    chapters = [(title, seconds_of(path)) for title, (path, _n) in zip(titles, got)]
     listing = os.path.join(into, "concat.txt")
     metafile = os.path.join(into, "chapters.txt")
     with open(listing, "w") as f:
@@ -331,6 +351,9 @@ def build_m4b(about, got, into, bitrate="64k"):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
+    listed = sub.add_parser("names", help="print the chapter names, to edit and pass to m4b")
+    listed.add_argument("identifier", help="the identifier, or any archive.org URL for it")
+    listed.add_argument("--format", dest="fmt", help=f"one of {', '.join(FORMATS)}")
     found = sub.add_parser("search", help="find a recording by title")
     found.add_argument("words", nargs="+")
     found.add_argument("--collection", default=COLLECTION,
@@ -345,11 +368,19 @@ def main(argv=None):
         p.add_argument("--format", dest="fmt", help=f"one of {', '.join(FORMATS)}")
         if name == "m4b":
             p.add_argument("--bitrate", default="64k", help="AAC bitrate (default: 64k mono)")
+            p.add_argument("--names", metavar="FILE",
+                           help="chapter names, one per line, in place of the tracks' own")
         p.add_argument("--upload", action="store_true",
                        help=f"put it in Proton Drive at {PROTON_DEST}")
         p.add_argument("--dest", help="a different Proton Drive folder")
     args = parser.parse_args(argv)
-    if args.command == "search":
+    if args.command == "names":
+        meta = get_json(f"{ARCHIVE}/metadata/{identifier_of(args.identifier)}")
+        _fmt, chosen = tracks(meta.get("files") or [], args.fmt)
+        print(f"# {len(chosen)} tracks — one name per line, in playing order")
+        for i, f in enumerate(chosen, start=1):
+            print(os.path.splitext(filename(i, f))[0][3:] or f["name"])
+    elif args.command == "search":
         found = search(args.words, collection=args.collection)
         for d in found:
             print(f"{d['identifier']:<40} {str(d.get('runtime') or '?'):>9}  "
@@ -366,7 +397,7 @@ def main(argv=None):
         into = os.path.join(os.path.expanduser(args.dir), identifier)
         about, got = fetch(identifier, into, args.fmt)
         if args.command == "m4b":
-            book = build_m4b(about, got, into, args.bitrate)
+            book = build_m4b(about, got, into, args.bitrate, args.names)
             if args.upload:
                 upload([book], args.dest)
         else:

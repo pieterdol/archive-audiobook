@@ -249,6 +249,37 @@ class TestTheM4b:
         assert audiobook.cover_file([{"name": "spectrogram.png", "format": "JPEG"}]) is None
 
 
+class TestNamingTheChapters:
+    """An item whose tracks are called "track 03" makes a useless chapter list, and Open Library
+    has no table of contents to fetch — nothing in eighty editions of four classics had one. So
+    the names get written by hand."""
+
+    def names_file(self, tmp_path, text):
+        path = tmp_path / "names.txt"
+        path.write_text(text)
+        return str(path)
+
+    def test_one_per_line(self, tmp_path):
+        path = self.names_file(tmp_path, "Opening\nThe Long Middle\nHow It Ends\n")
+        assert audiobook.read_names(path, 3) == ["Opening", "The Long Middle", "How It Ends"]
+
+    def test_blank_lines_and_comments_are_passed_over(self, tmp_path):
+        path = self.names_file(tmp_path, "# three tracks\n\nOne\n\n  # note\nTwo\nThree\n")
+        assert audiobook.read_names(path, 3) == ["One", "Two", "Three"]
+
+    def test_a_count_that_does_not_match_is_refused(self, tmp_path):
+        """Names pairing off against the wrong tracks silently would be worse than refusing,
+        and off by one is exactly what happens when a reader's intro is a track."""
+        path = self.names_file(tmp_path, "Only\nTwo\n")
+        with pytest.raises(SystemExit) as e:
+            audiobook.read_names(path, 3)
+        assert "2 names for 3 tracks" in str(e.value)
+
+    def test_they_keep_the_order_they_are_written_in(self, tmp_path):
+        path = self.names_file(tmp_path, "Third\nFirst\nSecond\n")
+        assert audiobook.read_names(path, 3)[0] == "Third"
+
+
 class TestUploading:
     """What proton-drive is told. The upload itself is its business."""
 
