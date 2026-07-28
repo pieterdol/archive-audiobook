@@ -7,7 +7,7 @@ listing.
 
     ./librivox.py search the time machine
     ./librivox.py get time_machine_ms_librivox
-    ./librivox.py get time_machine_ms_librivox --dir ~/Audiobooks --format 64Kbps MP3
+    ./librivox.py m4b time_machine_ms_librivox --upload
 
 Two calls do the work: /metadata/<id> lists an item's files, /download/<id>/<file> fetches one.
 LibriVox recordings are public domain; the licence of the item it found is printed before
@@ -39,6 +39,10 @@ BUSY = {429, 460, 500, 502, 503, 504}
 TRIES = 5
 BACKOFF = 4          # seconds, doubling: 4, 8, 16, 32
 PAUSE = 1            # between tracks, since a book is a couple of hundred megabytes in one go
+# Proton Drive's CLI, and where a book goes in it. The folder has to exist already — this
+# uploads, it doesn't build a tree.
+PROTON = os.path.expanduser("~/.local/bin/proton-drive")
+PROTON_DEST = os.environ.get("PROTON_DEST", "/my-files/Audiobooks")
 
 
 def _wait(seconds, why):
@@ -145,6 +149,28 @@ def download(url, path, size):
             _wait(BACKOFF * 2 ** attempt, f"{type(e).__name__} part way through")
     os.replace(tmp, path)                 # so a half-written file is never mistaken for done
     return True
+
+
+def upload(paths, dest=None):
+    """Put files in Proton Drive, so the book is on the phone without a cable.
+
+    A conflict strategy is not optional: without one the CLI asks what to do about a file
+    that's already there, and a script waiting on an answer nobody is there to give looks
+    exactly like a hung upload. `replace` means fetching a book twice replaces it rather than
+    leaving "The Time Machine (1).m4b" behind. Thumbnails are skipped — there's nothing to see
+    in an audiobook.
+    """
+    dest = dest or PROTON_DEST
+    if not os.path.exists(PROTON):
+        sys.exit(f"{PROTON} isn't installed, and it's what uploads to Proton Drive")
+    size = round(sum(os.path.getsize(p) for p in paths) / 1e6)
+    print(f"\nUploading {len(paths)} file{'' if len(paths) == 1 else 's'}, {size} MB, "
+          f"to {dest} …", flush=True)
+    r = subprocess.run([PROTON, "filesystem", "upload", "-f", "replace", "-t", *paths, dest],
+                       capture_output=True, text=True, timeout=7200)
+    if r.returncode != 0:
+        sys.exit("proton-drive failed:\n" + ((r.stderr or r.stdout).strip() or "")[-600:])
+    print("📤 Uploaded — it'll be on the phone shortly.")
 
 
 def fetch(identifier, into, want=None):
@@ -263,6 +289,7 @@ def build_m4b(about, got, into, bitrate="64k"):
     for scratch in (listing, metafile):
         os.remove(scratch)
     print(f"\n{out}\n{len(chapters)} chapters, {round(os.path.getsize(out) / 1e6)} MB")
+    return out
 
 
 def main(argv=None):
@@ -279,6 +306,9 @@ def main(argv=None):
         p.add_argument("--format", dest="fmt", help=f"one of {', '.join(FORMATS)}")
         if name == "m4b":
             p.add_argument("--bitrate", default="64k", help="AAC bitrate (default: 64k mono)")
+        p.add_argument("--upload", action="store_true",
+                       help=f"put it in Proton Drive at {PROTON_DEST}")
+        p.add_argument("--dest", help="a different Proton Drive folder")
     args = parser.parse_args(argv)
     if args.command == "search":
         for d in search(args.words):
@@ -288,8 +318,12 @@ def main(argv=None):
         into = os.path.join(os.path.expanduser(args.dir), args.identifier)
         about, got = fetch(args.identifier, into, args.fmt)
         if args.command == "m4b":
-            build_m4b(about, got, into, args.bitrate)
+            book = build_m4b(about, got, into, args.bitrate)
+            if args.upload:
+                upload([book], args.dest)
         else:
+            if args.upload:
+                upload([p for p, _ in got], args.dest)
             print("\nDone. Import the folder into BookPlayer — it keeps the order "
                   "from the names.")
 

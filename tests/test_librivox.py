@@ -4,6 +4,7 @@ No test goes near the network: which files it picks and what it calls them are d
 file listing, and the retrying is tested against a urlopen that answers however the test says.
 """
 import email.message
+import subprocess
 import urllib.error
 
 import pytest
@@ -192,6 +193,53 @@ class TestTheM4b:
     def test_a_png_named_as_a_jpeg_entry_is_not_taken(self):
         """The spectrograms archive generates are PNGs filed under a JPEG-ish format."""
         assert librivox.cover_file([{"name": "spectrogram.png", "format": "JPEG"}]) is None
+
+
+class TestUploading:
+    """What proton-drive is told. The upload itself is its business."""
+
+    def ran(self, monkeypatch, tmp_path, returncode=0):
+        book = tmp_path / "A Book.m4b"
+        book.write_bytes(b"\0" * 2048)
+        calls = []
+
+        def run(cmd, **kw):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, returncode, "", "no")
+
+        monkeypatch.setattr(librivox.os.path, "exists", lambda p: True)
+        monkeypatch.setattr(librivox.subprocess, "run", run)
+        return str(book), calls
+
+    def test_it_goes_to_the_audiobooks_folder(self, monkeypatch, tmp_path):
+        book, calls = self.ran(monkeypatch, tmp_path)
+        librivox.upload([book])
+        assert calls[0][-1] == "/my-files/Audiobooks"
+        assert calls[0][:3] == [librivox.PROTON, "filesystem", "upload"]
+        assert book in calls[0]
+
+    def test_a_conflict_strategy_is_always_given(self, monkeypatch, tmp_path):
+        """Without one the CLI asks what to do about a file already there, and a script waiting
+        on an answer nobody will give looks exactly like a hung upload."""
+        book, calls = self.ran(monkeypatch, tmp_path)
+        librivox.upload([book])
+        assert "-f" in calls[0] and calls[0][calls[0].index("-f") + 1] == "replace"
+
+    def test_somewhere_else_if_asked(self, monkeypatch, tmp_path):
+        book, calls = self.ran(monkeypatch, tmp_path)
+        librivox.upload([book], "/my-files/Elsewhere")
+        assert calls[0][-1] == "/my-files/Elsewhere"
+
+    def test_a_failure_stops_rather_than_claiming_success(self, monkeypatch, tmp_path):
+        book, _calls = self.ran(monkeypatch, tmp_path, returncode=1)
+        with pytest.raises(SystemExit):
+            librivox.upload([book])
+
+    def test_without_the_cli_it_says_so(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(librivox.os.path, "exists", lambda p: False)
+        with pytest.raises(SystemExit) as e:
+            librivox.upload(["/books/A Book.m4b"])
+        assert "proton-drive" in str(e.value)
 
 
 class TestTrackNumber:

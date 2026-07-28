@@ -9,6 +9,7 @@ Standard library only. No install, no venv, no dependencies.
 ./librivox.py search the time machine
 ./librivox.py get time_machine_ms_librivox
 ./librivox.py m4b time_machine_ms_librivox
+./librivox.py m4b time_machine_ms_librivox --upload
 ./librivox.py m4b time_machine_ms_librivox --dir ~/Audiobooks --format "64Kbps MP3" --bitrate 48k
 ```
 
@@ -32,6 +33,21 @@ MP3 came out at 104 MB for three and a half hours. `--bitrate` if you disagree.
 
 The tracks are kept alongside it. Building writes to a `.part` and renames when it's whole, so an
 interrupted encode never leaves something that looks like an audiobook.
+
+## Proton Drive
+
+`--upload` puts the result in Proton Drive, which is how it reaches the phone without a cable:
+the `.m4b` from `m4b`, or the tracks from `get`. It shells out to `~/.local/bin/proton-drive`,
+which has to be logged in already (`proton-drive auth login`).
+
+`/my-files/Audiobooks` by default — the folder must exist, since this uploads rather than builds
+a tree. `--dest` or `PROTON_DEST` sends it somewhere else.
+
+A conflict strategy is always passed, and that isn't cosmetic: without one the CLI *asks* what to
+do about a file that's already there, and a script waiting for an answer nobody is there to give
+looks exactly like a hung upload. It's `replace`, so fetching a book twice replaces it rather than
+leaving `The Time Machine (1).m4b` behind. Thumbnails are skipped; there's nothing to see in an
+audiobook.
 
 ## What it does with the files
 
