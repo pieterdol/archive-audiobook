@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Fetch a LibriVox recording off archive.org, as a folder of MP3s for BookPlayer.
+"""Fetch an audiobook off archive.org — as numbered MP3s, or as one .m4b with chapter marks.
 
-A folder of numbered tracks is what BookPlayer imports, and LibriVox is where the human-read
-public-domain recordings are. This makes no audio of its own and reads nothing but the item
-listing.
+archive.org is where the recordings are. LibriVox is where most of the good ones come from —
+its volunteers read public-domain books and upload every one to the Internet Archive — so
+`search` looks in their collection, while `get` and `m4b` will take any item at all.
 
-    ./librivox.py search the time machine
-    ./librivox.py get time_machine_ms_librivox
-    ./librivox.py m4b time_machine_ms_librivox --upload
-    ./librivox.py m4b https://archive.org/download/time_machine_ms_librivox
+    ./audiobook.py search the time machine
+    ./audiobook.py get time_machine_ms_librivox
+    ./audiobook.py m4b time_machine_ms_librivox --upload
+    ./audiobook.py m4b https://archive.org/download/time_machine_ms_librivox
 
 Two calls do the work: /metadata/<id> lists an item's files, /download/<id>/<file> fetches one.
 LibriVox recordings are public domain; the licence of the item it found is printed before
@@ -29,10 +29,15 @@ import urllib.parse
 import urllib.request
 
 ARCHIVE = "https://archive.org"
-AGENT = {"User-Agent": "librivox-fetch (personal use)"}
+AGENT = {"User-Agent": "archive-audiobook (personal use)"}
 # Best first. VBR is what LibriVox uploads; the fixed-rate ones are archive.org's derivatives,
 # and 64 kbps of a single voice reading is perfectly listenable at a third of the size.
 FORMATS = ["VBR MP3", "128Kbps MP3", "64Kbps MP3"]
+# What `search` looks in unless told otherwise. archive.org holds everything, so the same words
+# unfiltered come back as film trailers and scanned copies of the book; even audio alone returns
+# radio plays, a remastered film score and podcast episodes. librivoxaudio is the shelf of books
+# read aloud by volunteers, which is the one worth searching. "any" widens it to all audio.
+COLLECTION = "librivoxaudio"
 # What archive.org answers when it's had enough of you. 460 is its own, undocumented and not a
 # broken file — the same URL serves in full a few seconds later, which is how a book fell over
 # on track 15 of 17. 429 and the 5xx family mean the same thing here.
@@ -80,10 +85,16 @@ def get_json(url):
         return json.load(r)
 
 
-def search(words, rows=8):
-    """Items in the LibriVox collection matching some words of a title."""
-    query = f'collection:librivoxaudio AND title:("{" ".join(words)}")'
-    url = (f"{ARCHIVE}/advancedsearch.php?q={urllib.parse.quote(query)}"
+def search_query(words, collection=COLLECTION):
+    """The lucene query: some words of a title, inside one collection or across all audio."""
+    scope = f"collection:{collection}" if collection and collection != "any" else "mediatype:audio"
+    return f'{scope} AND title:("{" ".join(words)}")'
+
+
+def search(words, rows=8, collection=COLLECTION):
+    """Items matching some words of a title. Only the search is scoped to LibriVox; everything
+    downstream takes any item archive.org has."""
+    url = (f"{ARCHIVE}/advancedsearch.php?q={urllib.parse.quote(search_query(words, collection))}"
            "&fl%5B%5D=identifier&fl%5B%5D=title&fl%5B%5D=creator&fl%5B%5D=runtime"
            f"&rows={rows}&output=json")
     return get_json(url)["response"]["docs"]
@@ -317,6 +328,9 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
     found = sub.add_parser("search", help="find a recording by title")
     found.add_argument("words", nargs="+")
+    found.add_argument("--collection", default=COLLECTION,
+                       help=f"archive.org collection to look in (default: {COLLECTION}; "
+                            f'"any" searches all audio)')
     for name, help_text in (("get", "download one, by the identifier search prints"),
                             ("m4b", "download it and make one .m4b with chapter marks")):
         p = sub.add_parser(name, help=help_text)
@@ -331,7 +345,7 @@ def main(argv=None):
         p.add_argument("--dest", help="a different Proton Drive folder")
     args = parser.parse_args(argv)
     if args.command == "search":
-        for d in search(args.words):
+        for d in search(args.words, collection=args.collection):
             print(f"{d['identifier']:<40} {str(d.get('runtime') or '?'):>9}  "
                   f"{str(d.get('title'))[:38]:<40} {str(d.get('creator') or '')[:24]}")
     else:

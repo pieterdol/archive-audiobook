@@ -1,25 +1,32 @@
-# librivox
+# archive-audiobook
 
-Fetch a LibriVox recording off archive.org as a folder of numbered MP3s, ready to import into
-BookPlayer or anything else that plays a folder in name order.
+Fetch an audiobook off archive.org — as a folder of numbered MP3s ready for BookPlayer, or as one
+`.m4b` with chapter marks, and optionally straight into Proton Drive.
+
+archive.org is where the recordings live. LibriVox is where most of the good ones come from: its
+volunteers read public-domain books and upload every one to the Internet Archive. So `search`
+looks in their collection, while `get` and `m4b` will take any item at all.
 
 Standard library only. No install, no venv, no dependencies.
 
 ```bash
-./librivox.py search the time machine
-./librivox.py get time_machine_ms_librivox
-./librivox.py m4b time_machine_ms_librivox
-./librivox.py m4b time_machine_ms_librivox --upload
-./librivox.py m4b https://archive.org/download/time_machine_ms_librivox
-./librivox.py m4b time_machine_ms_librivox --dir ~/Audiobooks --format "64Kbps MP3" --bitrate 48k
+./audiobook.py search the time machine
+./audiobook.py get time_machine_ms_librivox
+./audiobook.py m4b time_machine_ms_librivox
+./audiobook.py m4b time_machine_ms_librivox --upload
+./audiobook.py m4b https://archive.org/download/time_machine_ms_librivox
+./audiobook.py m4b time_machine_ms_librivox --dir ~/Audiobooks --format "64Kbps MP3" --bitrate 48k
 ```
 
 Anywhere an identifier is wanted, an archive.org URL will do — `/details/`, `/download/` or
 `/metadata/`, with or without a file after it, since the identifier sits in the same place in all
 of them. A URL naming one track still fetches the whole recording.
 
-`search` matches words against the title within archive.org's LibriVox collection and prints the
-identifier, the runtime, the title and the reader's source author. `get` takes one of those
+`search` matches words against the title and prints the identifier, the runtime, the title and the
+author. It looks in `librivoxaudio` because archive.org holds everything: the same words unfiltered
+come back as film trailers and scanned copies of the book, and audio alone still returns radio
+plays, a remastered film score and podcast episodes. `--collection` looks elsewhere, and
+`--collection any` widens it to all audio. `get` takes one of those
 identifiers and downloads it to `audiobooks/<identifier>/`. `m4b` does the same and then builds
 one audiobook file out of the tracks.
 
