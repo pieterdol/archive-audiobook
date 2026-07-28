@@ -117,8 +117,12 @@ def identifier_of(text):
     found = _ITEM_URL.search(text)
     if found:
         return urllib.parse.unquote(found.group(1))
-    if "/" in text or text.lower().startswith("http"):
-        sys.exit(f"that doesn't name an archive.org item: {text}")
+    if os.path.isdir(os.path.expanduser(text)):
+        sys.exit(f'"{text}" is a folder of your own — that\'s: audiobook.py pack "{text}"')
+    if not re.fullmatch(r"[\w.-]+", text):
+        # Anything else would go into a URL and come back as a stack trace about control
+        # characters, which says nothing about what went wrong.
+        sys.exit(f"that isn't an archive.org identifier or URL: {text}")
     return text
 
 
@@ -263,6 +267,47 @@ def cover_file(files):
     return None
 
 
+AUDIO = (".mp3", ".m4a", ".m4b", ".ogg", ".opus", ".flac", ".wav", ".aac")
+
+
+def in_order(names):
+    """Sorted the way a person numbers things: 2 before 10, which plain sorting gets wrong the
+    moment a folder isn't zero-padded."""
+    return sorted(names, key=lambda n: [int(p) if p.isdigit() else p.lower()
+                                        for p in re.split(r"(\d+)", n)])
+
+
+def tag_of(path, key):
+    """One metadata tag off a file, or "" — for taking the author off the tracks themselves."""
+    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", f"format_tags={key}",
+                          "-of", "default=nw=1:nk=1", path],
+                         capture_output=True, text=True, timeout=60)
+    return out.stdout.strip()
+
+
+def pack(folder, names=None, title=None, author=None, bitrate="64k"):
+    """One .m4b out of a folder of audio you already have.
+
+    Nothing is fetched: these are your files. The order is the file order, naturally sorted; the
+    chapter names are the file names unless --names says otherwise; the title is the folder's
+    name and the author comes off the first track's tags. Every one of those is a guess, so it
+    prints what it is about to do before it spends ten minutes encoding.
+    """
+    folder = os.path.expanduser(folder).rstrip("/")
+    if not os.path.isdir(folder):
+        sys.exit(f"no such folder: {folder}")
+    files = in_order([f for f in os.listdir(folder) if f.lower().endswith(AUDIO)
+                      and not f.lower().endswith((".m4b", ".part"))])
+    if not files:
+        sys.exit(f"no audio in {folder}")
+    got = [(os.path.join(folder, f), os.path.splitext(f)[0]) for f in files]
+    about = {"title": title or os.path.basename(os.path.abspath(folder)),
+             "creator": author or tag_of(got[0][0], "artist") or ""}
+    print(f"{about['title']} — {about['creator'] or 'nobody named'}")
+    print(f"{len(got)} tracks from {folder}")
+    return build_m4b(about, got, folder, bitrate, names)
+
+
 def read_names(path, count):
     """Chapter names from a file, one per line, blank lines and # comments passed over.
 
@@ -373,6 +418,16 @@ def main(argv=None):
     found.add_argument("--collection", default=COLLECTION,
                        help=f"archive.org collection to look in (default: {COLLECTION}; "
                             f'"any" searches all audio)')
+    packed = sub.add_parser("pack", help="make an .m4b from a folder of audio you already have")
+    packed.add_argument("folder")
+    packed.add_argument("--names", metavar="FILE",
+                        help="chapter names, one per line, in place of the file names")
+    packed.add_argument("--title", help="default: the folder's name")
+    packed.add_argument("--author", help="default: whatever the first track's tags say")
+    packed.add_argument("--bitrate", default="64k", help="AAC bitrate (default: 64k mono)")
+    packed.add_argument("--upload", action="store_true",
+                        help=f"put it in Proton Drive at {PROTON_DEST}")
+    packed.add_argument("--dest", help="a different Proton Drive folder")
     for name, help_text in (("get", "download one, by the identifier search prints"),
                             ("m4b", "download it and make one .m4b with chapter marks")):
         p = sub.add_parser(name, help=help_text)
@@ -388,7 +443,11 @@ def main(argv=None):
                        help=f"put it in Proton Drive at {PROTON_DEST}")
         p.add_argument("--dest", help="a different Proton Drive folder")
     args = parser.parse_args(argv)
-    if args.command == "names":
+    if args.command == "pack":
+        book = pack(args.folder, args.names, args.title, args.author, args.bitrate)
+        if args.upload:
+            upload([book], args.dest)
+    elif args.command == "names":
         meta = get_json(f"{ARCHIVE}/metadata/{identifier_of(args.identifier)}")
         _fmt, chosen = tracks(meta.get("files") or [], args.fmt)
         print(f"# {len(chosen)} tracks — one name per line, in playing order")

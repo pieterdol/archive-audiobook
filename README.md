@@ -11,6 +11,7 @@ Standard library only. No install, no venv, no dependencies.
 
 ```bash
 ./audiobook.py search the time machine
+./audiobook.py pack "~/Audiobooks/Some Book" --names names.txt
 ./audiobook.py get time_machine_ms_librivox
 ./audiobook.py m4b time_machine_ms_librivox
 ./audiobook.py m4b time_machine_ms_librivox --upload
@@ -49,6 +50,21 @@ MP3 came out at 104 MB for three and a half hours. `--bitrate` if you disagree.
 
 The tracks are kept alongside it. Building writes to a `.part` and renames when it's whole, so an
 interrupted encode never leaves something that looks like an audiobook.
+
+## A folder you already have
+
+Not every audiobook is on archive.org. `pack` makes an `.m4b` out of audio you already have,
+fetching nothing:
+
+```bash
+./audiobook.py pack "~/Audiobooks/Some Book" --names names.txt --upload
+```
+
+The order is the file order, sorted the way a person numbers things — 2 before 10, which plain
+sorting gets wrong the moment a folder isn't zero-padded. Chapter names are the file names unless
+`--names` says otherwise, the title is the folder's name unless `--title` does, and the author
+comes off the first track's tags unless `--author` does. Its own `.m4b` and any half-downloaded
+`.part` are left out, so running it twice doesn't pack the last result into the next one.
 
 ## Chapter names
 

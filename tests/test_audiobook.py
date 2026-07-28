@@ -4,6 +4,7 @@ No test goes near the network: which files it picks and what it calls them are d
 file listing, and the retrying is tested against a urlopen that answers however the test says.
 """
 import email.message
+import os
 import subprocess
 import urllib.error
 
@@ -68,10 +69,18 @@ class TestNamingTheItem:
         "https://example.com/download/an_item",
         "https://archive.org/search?query=wells",
         "some/path/somewhere",
+        "The Wheel Of Time - The Eye Of The World",   # a title, which is not an identifier
     ])
     def test_something_that_names_no_item(self, text):
+        """It used to go into a URL and come back as a stack trace about control characters,
+        which says nothing about what went wrong."""
         with pytest.raises(SystemExit):
             audiobook.identifier_of(text)
+
+    def test_a_folder_of_your_own_is_pointed_at_pack(self, tmp_path):
+        with pytest.raises(SystemExit) as e:
+            audiobook.identifier_of(str(tmp_path))
+        assert "pack" in str(e.value)
 
 
 class TestChoosingTheTracks:
@@ -297,6 +306,67 @@ class Answer:
 
     def __exit__(self, *_):
         return False
+
+
+class TestPackingAFolderYouAlreadyHave:
+    """Not everything is on archive.org. A folder of your own files needs no fetching at all."""
+
+    def make(self, tmp_path, *names):
+        for n in names:
+            (tmp_path / n).write_bytes(b"\0" * 16)
+        return str(tmp_path)
+
+    def caught(self, monkeypatch):
+        """Stand in for the encode, and answer for the tags, so nothing runs ffmpeg."""
+        seen = {}
+
+        def build(about, got, into, bitrate="64k", names=None):
+            seen.update(about=about, got=got, into=into, names=names)
+            return os.path.join(into, "out.m4b")
+
+        monkeypatch.setattr(audiobook, "build_m4b", build)
+        monkeypatch.setattr(audiobook, "tag_of", lambda path, key: "A Reader")
+        return seen
+
+    def test_two_comes_before_ten(self):
+        """Plain sorting puts 10 before 2, and a folder you assembled yourself is rarely
+        zero-padded."""
+        assert audiobook.in_order(["10 ten.mp3", "2 two.mp3", "1 one.mp3"]) == \
+            ["1 one.mp3", "2 two.mp3", "10 ten.mp3"]
+
+    def test_the_files_go_in_naturally_sorted(self, monkeypatch, tmp_path):
+        folder = self.make(tmp_path, "10 j.mp3", "2 b.mp3", "1 a.mp3")
+        seen = self.caught(monkeypatch)
+        audiobook.pack(folder)
+        assert [n for _p, n in seen["got"]] == ["1 a", "2 b", "10 j"]
+
+    def test_the_folder_names_the_book_and_the_tags_name_the_reader(self, monkeypatch, tmp_path):
+        folder = self.make(tmp_path, "01 one.mp3")
+        seen = self.caught(monkeypatch)
+        audiobook.pack(folder)
+        assert seen["about"]["title"] == os.path.basename(folder)
+        assert seen["about"]["creator"] == "A Reader"
+
+    def test_but_you_can_say_so_yourself(self, monkeypatch, tmp_path):
+        folder = self.make(tmp_path, "01 one.mp3")
+        seen = self.caught(monkeypatch)
+        audiobook.pack(folder, title="A Book", author="Somebody")
+        assert seen["about"] == {"title": "A Book", "creator": "Somebody"}
+
+    def test_it_leaves_its_own_output_out(self, monkeypatch, tmp_path):
+        """Or a second run packs the last .m4b into the next one."""
+        folder = self.make(tmp_path, "01 one.mp3", "A Book.m4b", "02 two.mp3.part")
+        seen = self.caught(monkeypatch)
+        audiobook.pack(folder)
+        assert [os.path.basename(p) for p, _n in seen["got"]] == ["01 one.mp3"]
+
+    def test_a_folder_with_nothing_to_pack(self, tmp_path):
+        with pytest.raises(SystemExit):
+            audiobook.pack(str(tmp_path))
+
+    def test_a_folder_that_is_not_there(self):
+        with pytest.raises(SystemExit):
+            audiobook.pack("/no/such/folder")
 
 
 class TestPickingUpWhereItStopped:
