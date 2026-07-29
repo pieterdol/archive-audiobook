@@ -308,8 +308,26 @@
         <h1 id="bookTitle"></h1>
         <div class="ba" id="bookAuthor"></div>
         <div class="bf" id="bookFacts"></div>
+        <button class="segtoggle" id="aboutToggle" style="margin-top:9px">
+          <span class="caret">▸</span> Rename</button>
       </div>
     </div>
+
+    <div class="card" id="aboutCard" hidden>
+      <label for="aboutTitle">Title</label>
+      <input type="text" id="aboutTitle" autocapitalize="words" autocorrect="off"
+             spellcheck="false">
+      <label for="aboutAuthor">Author</label>
+      <input type="text" id="aboutAuthor" autocapitalize="words" autocorrect="off"
+             spellcheck="false">
+      <div class="hint" id="aboutHint"></div>
+      <div class="acts">
+        <button class="btn primary" id="aboutSave">Save</button>
+        <button class="btn" id="aboutClear">↺ Back to the folder's name</button>
+      </div>
+    </div>
+
+    <div class="card" id="staleCard" hidden></div>
 
     <h2>The audiobook</h2>
     <div class="card" id="m4bCard"></div>
@@ -355,6 +373,7 @@
       <input type="checkbox" id="announce">
       <label for="announce" style="margin:0">Open it with the title and author, read aloud</label>
     </div>
+    <div class="hint" id="spoken"></div>
     <button class="btn primary wide" id="buildBtn">🔨 Build the audiobook</button>
     <div class="hint">Saves the names first, then encodes — a few minutes, and you can leave this
       page while it runs.</div>
@@ -617,11 +636,12 @@ async function openBook(id){
   const from = $("#fromTracks");
   from.hidden = !d.art;
   if(d.art) from.textContent = `🖼 Use the tracks' own (${d.art.width}×${d.art.height})`;
+  $("#announce").checked = store.get("announce", "") === "1";
+  $("#buildBtn").innerHTML = d.m4b ? "🔄 Rebuild the audiobook" : "🔨 Build the audiobook";
+  renderAbout();
   renderM4b();
   renderNames();
   restoreDraft();
-  $("#buildBtn").innerHTML = d.m4b ? "🔄 Rebuild the audiobook" : "🔨 Build the audiobook";
-  $("#announce").checked = store.get("announce", "") === "1";
   window.scrollTo(0, 0);
 }
 
@@ -635,6 +655,84 @@ function closeBook(){
   loadBooks();
 }
 $("#backToShelf").addEventListener("click", closeBook);
+
+// ---- what the book is called ----
+
+function renderAbout(){
+  const a = BOOK.about;
+  // The stored value, not the fallback: an empty field means "keep guessing", and showing the
+  // guess in it would turn the next Save into a decision nobody made.
+  $("#aboutTitle").value = a.title;
+  $("#aboutTitle").placeholder = a.folder_title;
+  $("#aboutAuthor").value = a.author;
+  $("#aboutAuthor").placeholder = a.found_author || "whatever the tags say";
+  $("#aboutHint").innerHTML = a.title
+    ? `The folder stays <b>${esc(BOOK.id)}</b>, so the shelf keeps its order.`
+    : `Empty means the folder's own name — <b>${esc(a.folder_title)}</b>.`;
+  renderSpoken();
+  renderStale();
+}
+
+// The opening leaves off the number a book is filed under, and says "zero one" if it doesn't, so
+// this is worth seeing before ten minutes of encoding rather than after.
+function renderSpoken(){
+  if(!BOOK) return;
+  const s = BOOK.spoken;
+  $("#spoken").innerHTML = !$("#announce").checked ? ""
+    : `It will say “${esc(s.title)}”` + (s.author ? `, then “by ${esc(s.author)}”.` : ".")
+      + (s.title !== BOOK.title ? ` The number stays in the filename.` : "");
+}
+
+function renderStale(){
+  const box = $("#staleCard");
+  const stale = BOOK.stale || [];
+  box.hidden = !stale.length;
+  if(!stale.length) return;
+  box.innerHTML = `<div class="warn" style="margin:0">There's an older audiobook file here from a
+    previous name. Building doesn't remove it, and it looks just as finished as the real one.</div>`
+    + stale.map(s => `<div class="acts"><div style="flex:1 1 60%;font-size:13px;word-break:break-word">
+        ${esc(s.name)} · ${mb(s.mb)}</div>
+      <button class="btn" data-stale="${esc(s.name)}" style="flex:0 0 auto;color:var(--bad)">Delete</button>
+      </div>`).join("");
+  box.querySelectorAll("[data-stale]").forEach(b => b.addEventListener("click", async ()=>{
+    const name = b.dataset.stale;
+    if(!confirm(`Delete ${name}? It can only be got back by building again.`)) return;
+    b.disabled = true;
+    try {
+      const d = await api("/api/books/" + u(BOOK.id) + "/tidy",
+        {method:"POST", headers:{"Content-Type":"application/json"},
+         body: JSON.stringify({name})});
+      toast(`Removed ${esc(d.removed)} — ${mb(d.mb)} back.`);
+      await openBook(BOOK.id);
+    } catch(e){ toast("❌ " + esc(e.message), 7000); b.disabled = false; }
+  }));
+}
+
+$("#aboutToggle").addEventListener("click", ()=>{
+  const shut = $("#aboutCard").hidden;
+  $("#aboutCard").hidden = !shut;
+  $("#aboutToggle").classList.toggle("open", shut);
+  if(shut) $("#aboutTitle").focus();
+});
+$("#announce").addEventListener("change", renderSpoken);
+
+async function saveAbout(title, author){
+  try {
+    const d = await api("/api/books/" + u(BOOK.id) + "/about",
+      {method:"POST", headers:{"Content-Type":"application/json"},
+       body: JSON.stringify({title, author})});
+    BOOK = d.book;
+    $("#bookTitle").textContent = BOOK.title;
+    $("#bookAuthor").textContent = BOOK.author || "nobody named";
+    renderAbout();
+    const card = BOOKS.find(b => b.id === BOOK.id);
+    if(card){ card.title = BOOK.title; card.author = BOOK.author; renderShelf(); }
+    toast(`Called “${esc(BOOK.title)}” now.`);
+  } catch(e){ toast("❌ " + esc(e.message), 7000); }
+}
+$("#aboutSave").addEventListener("click", ()=>
+  saveAbout($("#aboutTitle").value, $("#aboutAuthor").value));
+$("#aboutClear").addEventListener("click", ()=> saveAbout("", ""));
 
 function renderM4b(){
   const box = $("#m4bCard");

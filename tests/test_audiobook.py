@@ -69,7 +69,7 @@ class TestNamingTheItem:
         "https://example.com/download/an_item",
         "https://archive.org/search?query=wells",
         "some/path/somewhere",
-        "The Wheel Of Time - The Eye Of The World",   # a title, which is not an identifier
+        "Some Book - The First Volume",   # a title, which is not an identifier
     ])
     def test_something_that_names_no_item(self, text):
         """It used to go into a URL and come back as a stack trace about control characters,
@@ -434,6 +434,64 @@ class TestTheSpokenOpening:
         with pytest.raises(SystemExit) as e:
             audiobook.announcement([("A Book", 0.7)], str(tmp_path), "track.mp3")
         assert audiobook.KOKORO in str(e.value)
+
+
+class TestSayingTheTitleWithoutItsNumber:
+    """A folder numbered so a series stays in order is a shelving device. Read out, it makes the
+    book open by announcing its own position — and Kokoro says "zero one", not "one"."""
+
+    @pytest.mark.parametrize("title, want", [
+        ("01 The Time Machine", "The Time Machine"),
+        ("1 The Time Machine", "The Time Machine"),
+        ("003 The Time Machine", "The Time Machine"),
+        ("01 - The Time Machine", "The Time Machine"),
+        ("01. The Time Machine", "The Time Machine"),
+        ("01) The Time Machine", "The Time Machine"),
+        ("01 – The Time Machine", "The Time Machine"),      # an en dash, which readers do use
+        ("15  A Later Book", "A Later Book"),
+    ])
+    def test_the_number_it_is_filed_under_comes_off(self, title, want):
+        assert audiobook.spoken(title) == want
+
+    @pytest.mark.parametrize("title", ["The Time Machine", "1984", "2001 A Space Odyssey",
+                                       "1Q84", "Fahrenheit 451"])
+    def test_a_number_that_is_the_name_stays(self, title):
+        """Four digits are left alone outright, and a number with no space after it was never a
+        prefix — the same guard filename() uses on a track called 1984."""
+        assert audiobook.spoken(title) == title
+
+    def test_a_title_that_is_only_a_number_survives(self):
+        """Stripping everything would leave Kokoro with nothing to say."""
+        assert audiobook.spoken("01") == "01"
+        assert audiobook.spoken("07 ") == "07"
+
+    def test_the_filename_keeps_the_number(self, monkeypatch, tmp_path):
+        """The point of the prefix is that a player sorting names alphabetically gets the series in
+        order, so it has to survive into the .m4b even though it isn't read out."""
+        said = self.said_by(monkeypatch, tmp_path)
+        (tmp_path / "01 One.mp3").write_bytes(b"\0")
+        out = audiobook.build_m4b({"title": "01 The Time Machine", "creator": "H. G. Wells"},
+                                  [(str(tmp_path / "01 One.mp3"), "One")], str(tmp_path),
+                                  opening=True)
+        assert os.path.basename(out) == "01 The Time Machine.m4b"
+        assert said["texts"] == ["The Time Machine", "by H. G. Wells"]
+
+    def said_by(self, monkeypatch, tmp_path):
+        said = {"texts": []}
+
+        def run(cmd, **kw):
+            if cmd[0] == audiobook.KOKORO:
+                said["texts"].append(cmd[1])
+                open(cmd[cmd.index("-o") + 1], "wb").write(b"\0")
+            elif cmd[0] == "ffmpeg":
+                open(cmd[-1], "wb").write(b"\0")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr(audiobook.shutil, "which", lambda tool: "/usr/bin/" + tool)
+        monkeypatch.setattr(audiobook.subprocess, "run", run)
+        monkeypatch.setattr(audiobook, "stream_of", lambda path, key: "44100")
+        monkeypatch.setattr(audiobook, "seconds_of", lambda path: 1.0)
+        return said
 
 
 class TestPickingUpWhereItStopped:

@@ -322,7 +322,9 @@ def card(book_id):
     folder = os.path.join(ROOT, book_id)
     tracks, m4b, cover = listing(folder)
     known = cached_for(book_id, tracks, m4b, folder, bool(cover))
-    return {"id": book_id, "title": title_of(book_id, m4b), "author": known.get("author", ""),
+    said_title, said_author = read_about(folder)
+    return {"id": book_id, "title": said_title or title_of(book_id, m4b),
+            "author": said_author or known.get("author", ""),
             "tracks": len(tracks), "mb": round(sum(s for _n, s in tracks) / 1e6, 1),
             "cover": bool(cover), "cover_v": cover[1] if cover else 0,
             "m4b": m4b[0] if m4b else None,
@@ -352,8 +354,19 @@ def detail(book_id):
     known = measured(book_id, tracks, m4b, folder, bool(cover))
     names, source = names_now(folder, tracks, known.get("chapters") or ())
     art = None if cover else known.get("art")
+    said_title, said_author = read_about(folder)
+    title = said_title or title_of(book_id, m4b)
+    author = said_author or known.get("author", "")
     return {
-        "id": book_id, "title": title_of(book_id, m4b), "author": known.get("author", ""),
+        "id": book_id, "title": title, "author": author,
+        # What's been typed, as opposed to what was worked out — so the form shows an empty field
+        # rather than the guess it would fall back to, and clearing it means "go back to guessing".
+        "about": {"title": said_title, "author": said_author,
+                  "folder_title": title_of(book_id, m4b),
+                  "found_author": known.get("author", "")},
+        # The opening reads the title without the number it's filed under, so show which it is
+        # before somebody spends ten minutes finding out.
+        "spoken": {"title": audiobook.spoken(title), "author": author},
         "cover": bool(cover), "cover_v": cover[1] if cover else 0,
         "art": art and {"width": art["width"], "height": art["height"], "file": art["file"]},
         "mb": round(sum(s for _n, s in tracks) / 1e6, 1),
@@ -361,12 +374,26 @@ def detail(book_id):
         "m4b": m4b and {"name": m4b[0], "mb": round(m4b[1] / 1e6, 1),
                         "runtime": runtime(known.get("seconds")),
                         "chapters": known.get("chapters") or []},
+        # Building under a new title writes a new file and leaves the old one looking finished.
+        "stale": stale_m4bs(folder, m4b),
         "tracks": [{"n": i, "file": n, "stem": stem_name(n, i),
                     "mb": round(s / 1e6, 1)}
                    for i, (n, s) in enumerate(tracks, start=1)],
         "names": {"source": source, "names": names},
         "job": job_here(book_id),
     }
+
+
+def stale_m4bs(folder, keep):
+    """Any .m4b that isn't the current one. Renaming a book means the next build writes a file
+    under the new name, and ffmpeg has no reason to remove the old one — so it sits there, the same
+    size and the same age it always was, looking exactly like the finished article."""
+    if not keep:
+        return []
+    others = [p for p in glob.glob(os.path.join(glob.escape(folder), "*.m4b"))
+              if os.path.basename(p) != keep[0]]
+    return [{"name": os.path.basename(p), "mb": round(os.path.getsize(p) / 1e6, 1)}
+            for p in sorted(others)]
 
 
 # ----------------------------------------------------------------- chapter names
@@ -417,6 +444,44 @@ def names_now(folder, tracks, chapters=()):
         found = (found + stems[len(found):])[:len(stems)]
         return found, "stale"
     return found, "names.txt"
+
+
+# The title and the author, when the folder's name isn't the answer. Plain text and one thing per
+# line, like names.txt, and like names.txt the CLI doesn't go looking for it — the page passes what
+# it says on the command line, so `pack` behaves the same whether it was typed here or there.
+ABOUT = "about.txt"
+
+
+def read_about(folder):
+    """-> (title, author), either of them "" if it isn't set. Blank lines and # comments skipped,
+    so the file can explain itself."""
+    try:
+        with open(os.path.join(folder, ABOUT)) as f:
+            said = [line.strip() for line in f
+                    if line.strip() and not line.lstrip().startswith("#")]
+    except OSError:
+        return "", ""
+    return (said + ["", ""])[0], (said + ["", ""])[1]
+
+
+def write_about(folder, title, author):
+    """about.txt, atomically. Written only when there's something to say — clearing both fields
+    takes the file away again and hands the title back to the folder's own name."""
+    path = os.path.join(folder, ABOUT)
+    title = re.sub(r"\s+", " ", str(title or "").replace("\0", "")).strip()[:200]
+    author = re.sub(r"\s+", " ", str(author or "").replace("\0", "")).strip()[:200]
+    if not title and not author:
+        if os.path.exists(path):
+            os.remove(path)
+        return "", ""
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write("# what this book is called, and who wrote it — one per line, title first\n")
+        f.write(title + "\n")
+        if author:
+            f.write(author + "\n")
+    os.replace(tmp, path)
+    return title, author
 
 
 def safe_name(text, n):
@@ -1131,6 +1196,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.post_cover(book_id, folder)
         if what == "artwork":
             return self.post_artwork(book_id, folder)
+        if what == "about":
+            return self.post_about(book_id, folder)
+        if what == "tidy":
+            return self.post_tidy(book_id, folder)
         if what == "names":
             return self.post_names(book_id, folder)
         if what == "build":
@@ -1186,6 +1255,35 @@ class Handler(BaseHTTPRequestHandler):
         say(f"took artwork from the tracks of {len(done)} book(s)")
         self.json_out({"ok": True, "done": done, "skipped": skipped})
 
+    def post_about(self, book_id, folder):
+        """What the book is called, when the folder's name isn't it."""
+        data = self.json_in()
+        if data is None:
+            return None
+        title, author = write_about(folder, data.get("title"), data.get("author"))
+        say(f"{book_id}: called {title or '(the folder)'} by {author or '(whatever the tags say)'}")
+        self.json_out({"ok": True, "book": detail(book_id)})
+
+    def post_tidy(self, book_id, folder):
+        """Delete one .m4b that isn't the current one — the leftover from a title change.
+
+        Named rather than swept: it's several hundred megabytes and the only copy, so the page has
+        to have said which file and the answer has to come back naming it too.
+        """
+        data = self.json_in()
+        if data is None:
+            return None
+        path = book_file(book_id, data.get("name") or "")
+        if not path or not path.lower().endswith(".m4b"):
+            return self.refuse(400, "no such audiobook file")
+        _tracks, m4b, _cover = listing(folder)
+        if m4b and os.path.basename(path) == m4b[0]:
+            return self.refuse(400, "that's the current audiobook, not a leftover")
+        mb = round(os.path.getsize(path) / 1e6)
+        os.remove(path)
+        say(f"{book_id}: removed the leftover {os.path.basename(path)} ({mb} MB)")
+        self.json_out({"ok": True, "removed": os.path.basename(path), "mb": mb})
+
     def post_names(self, book_id, folder):
         data = self.json_in()
         if data is None:
@@ -1204,12 +1302,13 @@ class Handler(BaseHTTPRequestHandler):
         data = self.json_in()
         if data is None:
             return None
-        tracks, m4b, _cover = listing(folder)
+        tracks, m4b, cover = listing(folder)
         if not tracks:
             return self.refuse(400, "there's no audio in this book to build from")
-        known = measured(book_id, tracks, m4b, folder)
-        title = title_of(book_id, m4b)
-        author = data.get("author") or known.get("author") or ""
+        known = measured(book_id, tracks, m4b, folder, bool(cover))
+        said_title, said_author = read_about(folder)
+        title = said_title or title_of(book_id, m4b)
+        author = said_author or data.get("author") or known.get("author") or ""
         spec = {"announce": bool(data.get("announce")), "voice": voice_of(data),
                 "bitrate": bitrate_of(data), "upload": bool(data.get("upload"))}
         argv = argv_build(spec, folder, title, author)

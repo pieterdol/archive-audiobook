@@ -229,6 +229,61 @@ class TestTheNamesFile:
         assert (names, source) == (["Introduction", "The Machine"], "the .m4b")
 
 
+class TestWhatTheBookIsCalled:
+    """The folder's name is the title until somebody says otherwise — and once a folder is numbered
+    so a series sorts, they will."""
+
+    def test_nothing_stored_is_not_an_answer(self, tmp_path):
+        assert webui.read_about(str(tmp_path)) == ("", "")
+
+    def test_a_title_and_an_author_survive_the_round_trip(self, tmp_path):
+        webui.write_about(str(tmp_path), "  A Proper Title ", "A Writer")
+        assert webui.read_about(str(tmp_path)) == ("A Proper Title", "A Writer")
+
+    def test_a_title_on_its_own_is_fine(self, tmp_path):
+        webui.write_about(str(tmp_path), "A Title", "")
+        assert webui.read_about(str(tmp_path)) == ("A Title", "")
+
+    def test_the_file_explains_itself(self, tmp_path):
+        """It sits next to names.txt in a folder somebody opens by hand."""
+        webui.write_about(str(tmp_path), "A Title", "A Writer")
+        lines = (tmp_path / "about.txt").read_text().splitlines()
+        assert lines[0].startswith("#") and lines[1:] == ["A Title", "A Writer"]
+
+    def test_clearing_both_takes_the_file_away(self, tmp_path):
+        """So the title goes back to being the folder's, rather than being pinned to an empty
+        string that nothing would ever fall back from."""
+        webui.write_about(str(tmp_path), "A Title", "A Writer")
+        assert webui.write_about(str(tmp_path), "", "") == ("", "")
+        assert not (tmp_path / "about.txt").exists()
+        assert webui.read_about(str(tmp_path)) == ("", "")
+
+    def test_a_newline_cannot_smuggle_in_a_second_field(self, tmp_path):
+        """One thing per line is the format, so a title containing a line break would otherwise
+        become the author."""
+        webui.write_about(str(tmp_path), "A Title\nA Writer", "")
+        assert webui.read_about(str(tmp_path)) == ("A Title A Writer", "")
+
+    def test_about_txt_is_not_a_track(self):
+        assert not webui.is_track("about.txt")
+
+    def test_a_leftover_m4b_is_reported(self, tmp_path):
+        """Building under a new title writes a new file and leaves the old one looking finished."""
+        (tmp_path / "New Name.m4b").write_bytes(b"\0" * 2000)
+        (tmp_path / "Old Name.m4b").write_bytes(b"\0" * 1000)
+        assert webui.stale_m4bs(str(tmp_path), ("New Name.m4b", 2000)) \
+            == [{"name": "Old Name.m4b", "mb": 0.0}]
+        assert webui.stale_m4bs(str(tmp_path), None) == []
+
+    def test_a_folder_whose_name_has_glob_characters_still_works(self, tmp_path):
+        """A book called "The Best of [1990]" is a legal folder name and an illegal glob."""
+        book = tmp_path / "The Best of [1990]"
+        book.mkdir()
+        (book / "A.m4b").write_bytes(b"\0")
+        (book / "B.m4b").write_bytes(b"\0")
+        assert [s["name"] for s in webui.stale_m4bs(str(book), ("A.m4b", 1))] == ["B.m4b"]
+
+
 class TestTheArgvItBuilds:
     def test_getting_a_book_passes_the_shelf(self):
         argv = webui.argv_get({"identifier": "some_item_librivox"})
@@ -499,7 +554,8 @@ class TestThePage:
         it would be testing."""
         script = page.split("<script>")[1].split("</script>")[0]
         routes = ["/api/books", "/api/books/*", "/api/books/*/names", "/api/books/*/cover",
-                  "/api/books/*/build", "/api/books/*/artwork", "/api/search", "/api/item",
+                  "/api/books/*/build", "/api/books/*/artwork", "/api/books/*/about",
+                  "/api/books/*/tidy", "/api/search", "/api/item",
                   "/api/get", "/api/artwork", "/api/jobs/*", "/api/jobs/*/cancel",
                   "/file/*/*", "/get/*/*"]
         # Every literal that starts a path, up to wherever an id gets spliced in.

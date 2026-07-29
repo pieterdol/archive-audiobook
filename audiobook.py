@@ -453,6 +453,23 @@ KOKORO = "kokoro-tts"       # ~/.local/bin, Kokoro-82M on the CPU, faster than r
 # author needs more, or chapter one starts on top of it.
 TITLE_PAUSE = 0.7
 AUTHOR_PAUSE = 1.6
+# A number in front of a title is a place on a shelf, not part of the name.
+_SHELVED = re.compile(r"^(\d{1,3})(?!\d)\s*[-–—.:)]*\s+")
+
+
+def spoken(title):
+    """The title as it should be read out: without the number it is filed under.
+
+    A folder called "01 The First Book" is how a series stays in order — a player sorting names
+    alphabetically needs it, and the .m4b keeps it — but handed to Kokoro it opens the book by
+    announcing its own position on the shelf. It says "zero one", too, not "one".
+
+    This is the same thing filename() does to a track whose title starts with its own number, for
+    the same reason. Four digits are left alone, so a book called 1984 or 2001 keeps its name; a
+    title that really does begin with a small number — 12 Angry Men — loses it, and --title is the
+    way to say so.
+    """
+    return _SHELVED.sub("", title).strip() or title.strip()
 
 
 def stream_of(path, key):
@@ -537,7 +554,8 @@ def build_m4b(about, got, into, bitrate="64k", names=None, opening=False,
         # After the names are counted, so a --names file still describes the book's own tracks
         # and not this. One chapter mark for the lot of it: it's an opening, not a chapter.
         author = about.get("creator")
-        phrases = [(title, TITLE_PAUSE)] + ([(f"by {author}", AUTHOR_PAUSE)] if author else [])
+        phrases = ([(spoken(title), TITLE_PAUSE)]
+                   + ([(f"by {author}", AUTHOR_PAUSE)] if author else []))
         said = announcement(phrases, into, got[0][0], voice)
         got, titles = [(said, title)] + list(got), [title] + list(titles)
     chapters = [(title, seconds_of(path)) for title, (path, _n) in zip(titles, got)]

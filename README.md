@@ -83,6 +83,13 @@ third of a second, which isn't long enough to read as *that was the title, this 
 and without the pause after the author, chapter one lands on top of the name. The two numbers are
 the ones speech-webui announces its own books with.
 
+A number in front of the title is left out of what's read. Numbering the folders of a series is
+how a player sorting names alphabetically gets them in order, and the `.m4b` keeps it — but read
+aloud it makes the book open by announcing its own position on the shelf, and Kokoro says *zero
+one*, not *one*. So `01 The First Book` is filed under that name and introduces itself as *The
+First Book*. Four digits are left alone, so a book called 1984 keeps its name; a title
+that really does start with a small number loses it, and `--title` is the way to say so.
+
 ```bash
 ./audiobook.py pack "~/Audiobooks/Some Book" --announce --voice bm_george
 ```
@@ -136,6 +143,17 @@ paste the whole list at once, fill `Chapter {n}` across every row, or replace on
 filename with another everywhere. An empty row refuses to save, and says why — the build counts lines, so a
 blank one would shift every chapter after it. Anything typed but not yet saved is kept in the
 browser, so a phone that gets backgrounded and killed doesn't lose fifty-four names.
+
+**What a book is called** is the folder's name, or the `.m4b`'s if it has one — which stops being
+the answer the moment the folders are numbered to keep a series in order. Rename writes the title
+and the author to `about.txt` beside `names.txt`, plain text and one per line, and the folder keeps
+whatever it was called. Emptying the fields deletes the file and hands the question back to the
+folder. The page shows what the spoken opening will say before you build, since that leaves the
+number off and the filename doesn't.
+
+Changing a title means the next build writes a file under the new name, and ffmpeg has no reason to
+remove the old one — so it sits there the same size and age it always was, looking exactly like the
+finished article. The page notices and offers to delete it, by name, once.
 
 **Adding one** searches archive.org, and shows you what you'd be getting before you commit to two
 hundred megabytes: the licence, the size, the format it would take, and the chapter names it would
