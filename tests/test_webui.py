@@ -515,6 +515,24 @@ class TestThePage:
         assert not check.trouble, check.trouble
         assert not check.stack, f"never closed: {check.stack}"
 
+    def test_the_icons_it_links_to_exist_and_are_served(self, page):
+        """A missing icon is a silent 404 and a blank tab, and the touch icon is only ever seen by
+        somebody adding the page to their home screen — which is not a thing you notice testing on a
+        desktop."""
+        linked = set(re.findall(r'<link[^>]+href="/([\w.-]+)"', page))
+        assert linked, "the page links to no icon at all"
+        for name in linked:
+            assert name in webui.STATIC, f"the page asks for /{name}, which nothing serves"
+            assert os.path.exists(os.path.join(webui.HERE, webui.STATIC[name])), \
+                f"{webui.STATIC[name]} is missing from the repo"
+
+    def test_the_home_screen_icon_is_not_transparent(self):
+        """apple-touch-icon paints alpha black, so a transparent one arrives as a black tile.
+        Colour type 6 is RGBA and 2 is RGB — this one has to be 2."""
+        raw = open(os.path.join(webui.HERE, "icon-touch.png"), "rb").read()
+        assert raw[:8] == b"\x89PNG\r\n\x1a\n"
+        assert raw[25] == 2, "icon-touch.png has an alpha channel; flatten it onto the background"
+
     def test_the_ios_head_is_there(self, page):
         """viewport-fit=cover plus black-translucent is what puts the page under the status bar,
         which is what makes every env(safe-area-inset-*) in the stylesheet necessary."""

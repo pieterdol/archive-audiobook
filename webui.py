@@ -53,6 +53,8 @@ JOB_LIMIT = 6 * 3600               # the CLI's own timeouts are 7200s each, with
 MIME = {".m4b": "audio/mp4", ".m4a": "audio/mp4", ".mp3": "audio/mpeg", ".ogg": "audio/ogg",
         ".opus": "audio/ogg", ".flac": "audio/flac", ".wav": "audio/wav", ".aac": "audio/aac",
         ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+# What this script will serve from its own folder, by name. Everything else in here is source.
+STATIC = {"icon.png": "icon.png", "icon-touch.png": "icon-touch.png", "favicon.ico": "icon.png"}
 # The scratch audiobook.py leaves inside a book folder while it works. Cleared at startup, since a
 # job doesn't outlive this process — but never *.mp3.part, which is where a download resumes from.
 LEFTOVERS = ("*.m4b.part", "concat.txt", "chapters.txt", ".announcement*", ".cover-src",
@@ -1126,8 +1128,8 @@ class Handler(BaseHTTPRequestHandler):
             if method in ("GET", "HEAD"):
                 if not parts:
                     return self.send_page()
-                if parts == ["favicon.ico"]:
-                    return self.respond(204, b"", "image/x-icon", log=False)
+                if len(parts) == 1 and parts[0] in STATIC:
+                    return self.send_static(parts[0])
                 if parts == ["api", "books"]:
                     return self.json_out({"root": ROOT, "books": shelf()})
                 if len(parts) == 3 and parts[0] == "api" and parts[1] == "books":
@@ -1168,6 +1170,30 @@ class Handler(BaseHTTPRequestHandler):
         self.refuse(405 if method == "POST" else 404, f"nothing at {split.path}")
 
     # -------------------------------------------------- the page
+
+    def send_static(self, name):
+        """The icon, and nothing else beside this script.
+
+        An allowlist rather than a folder: everything else in here is source, and one wrong path
+        check would serve it. /favicon.ico is the same file as /icon.png — a browser asks for that
+        name whatever the page says, so answering it saves a 404 per visit.
+        """
+        path = os.path.join(HERE, STATIC[name])
+        try:
+            stat = os.stat(path)
+            with open(path, "rb") as f:
+                blob = f.read()
+        except OSError:
+            return self.refuse(404, f"{STATIC[name]} isn't here")
+        # Cached but revalidated, not cached blind. A day-long max-age meant replacing the icon
+        # left the phone showing the old one until the cache aged out; the filename never changes,
+        # so there was nothing to tell it otherwise. One conditional request per load, answered 304
+        # in a couple of hundred bytes, and a new icon turns up at once.
+        tag = f'"{stat.st_mtime_ns}-{stat.st_size}"'
+        if self.headers.get("If-None-Match") == tag:
+            return self.respond(304, b"", "image/png", {"ETag": tag})
+        self.respond(200, blob, "image/png",
+                     {"ETag": tag, "Cache-Control": "public, max-age=0, must-revalidate"})
 
     def send_page(self):
         """index.html, read fresh every time and never cached, so a home-screen shortcut can't
