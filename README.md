@@ -110,6 +110,68 @@ happens when a reader's introduction is its own track.
 Open Library isn't an option for this, in case it looks like one — it carries descriptions, not
 tables of contents. Nothing in eighty editions of four classics had one.
 
+## The page
+
+`./webui.py` is the same thing with somewhere to type. It's the shelf as a grid of covers, and
+opening a book gives you one row per track: the track's number, which is also a play button, and
+the name you're giving it.
+
+```bash
+./webui.py                  # http://127.0.0.1:8610
+./serve.sh                  # and the same page over HTTPS on the phone, once
+```
+
+Standard library only, like the script it drives. Nothing to install, nothing to build — the whole
+interface is one `index.html`, read fresh on every request so a home-screen shortcut can't pin an
+old copy of it.
+
+Editing `names.txt` by hand works, but you can't hear anything while you do it, and a track called
+`12 - CH12.mp3` doesn't tell you which chapter it is. So every row plays its own track, the filename
+shows underneath a name once the two differ, and Save writes `names.txt` — which is cheap, so it
+doesn't encode anything. Building is a separate button, because that's minutes of CPU you might
+not want to start with your thumb.
+
+For a book whose tracks are all called the same thing, the tools behind ⚙ are quicker than typing:
+paste the whole list at once, fill `Chapter {n}` across every row, or replace one repeated scrap of
+filename with another everywhere. An empty row refuses to save, and says why — the build counts lines, so a
+blank one would shift every chapter after it. Anything typed but not yet saved is kept in the
+browser, so a phone that gets backgrounded and killed doesn't lose fifty-four names.
+
+**Adding one** searches archive.org, and shows you what you'd be getting before you commit to two
+hundred megabytes: the licence, the size, the format it would take, and the chapter names it would
+end up with — from `filename()` itself, so the preview can't disagree with the download. Every
+chapter has a ▶ that streams straight from archive.org, because LibriVox readers vary and some
+books change reader partway through. Nothing touches the disk until you press Get.
+
+**The covers** can be replaced from the page, with any image — a PNG with transparency, a HEIC off
+the phone — and ffmpeg converts it to the `cover.jpg` the `.m4b` embeds, scaled down if it's huge,
+since the embed is a straight copy and a 4000px cover would go onto the phone at 4000px.
+
+A book with no `cover.jpg` usually isn't missing its cover at all: a publisher's MP3s carry it in
+an ID3 frame, where a player looking at the folder can't see it and `build_m4b` can't embed it.
+The page offers to lift it out — per book, or for every book on the shelf at once, which after
+sorting a series is all of them. It's one ffmpeg per book and no re-encoding, so twenty books is a
+couple of seconds.
+
+Which picture, though, is a real question: files carry more than one. One book here holds its cover
+*and* a small square series emblem; another holds its cover *and* a photograph of the CD case with
+the disc beside it. Landscape loses first, which rules out the box shot, and then the biggest wins,
+which rules out the emblem. The ID3 picture type deliberately doesn't get the deciding vote — it's
+what labels that emblem "Cover (front)" while the real cover says "Other" — but it breaks a tie,
+since between two pictures of the same shape and size there's nothing else to go on.
+
+The work is `audiobook.py` itself, run as a subprocess. So everything above about resuming still
+holds: stopping a job is safe, and starting it again carries on from the byte it stopped at. The
+log you see is the CLI's own output. One job at a time, and a second one is refused rather than
+queued, with a message saying what's in the way.
+
+`AUDIOBOOK_ROOT` is the shelf, `audiobooks/` by default. `AUDIOBOOK_PORT` is 8610.
+
+It binds `127.0.0.1` and reaches the phone through `tailscale serve`, the way speech-webui does.
+HTTPS isn't cosmetic there: Safari withholds the Media Session API from an insecure origin, and
+that's the lock-screen artwork and the skip buttons. Both apps will happily run ffmpeg at the same
+time on the same cores, so it's worth not starting a book and a narration together.
+
 ## Proton Drive
 
 `--upload` puts the result in Proton Drive, which is how it reaches the phone without a cable:
@@ -155,6 +217,15 @@ downloads — so one that turns out not to be can be left alone.
 
 The two GETs aren't tested; which files it picks and what it calls them are, since those decide
 whether the book plays in order.
+
+The page's own tests go nowhere near a socket or a subprocess either. The range parser is the one
+worth having — Safari opens every audio element with `bytes=0-1` and refuses to play a file that
+answers 200 to it, so getting it wrong is silent. Then what a path is allowed to be, since a book
+id is a folder name somebody typed into a URL, and the argv it builds, because a rebuild that
+forgets `--title` writes a second audiobook beside the first and leaves the stale one looking
+finished. `index.html` is checked as text: every id the script reaches for exists, the tags
+balance, no input is small enough to make iOS zoom on focus, and every URL it fetches is one the
+server actually answers.
 
 ```bash
 python3 -m pytest          # or any interpreter with pytest

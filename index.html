@@ -1,0 +1,1359 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#15131f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Audiobooks">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🎧%3C/text%3E%3C/svg%3E">
+<title>Audiobooks</title>
+<style>
+  :root { --bg:#15131f; --card:#1e1b2e; --line:#332e4a; --accent:#8a6cff; --text:#e9e6f5;
+          --muted:#a49fc0; --ok:#7ee6a0; --warn:#ffd479; --bad:#ff9db0;
+          --hh:105px; }   /* header height incl. the mode row — what the sticky Save bar sits under */
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  /* Must out-rank everything, or the mode switch can't hide a view and both end up stacked. */
+  [hidden] { display:none !important; }
+  body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+         background:var(--bg); color:var(--text); }
+  /* env(safe-area-inset-*) keeps the header clear of the notch when the page runs from the home
+     screen — black-translucent puts us under it. 0 in an ordinary browser tab. */
+  header { font-size:19px; font-weight:700; border-bottom:1px solid var(--line);
+           padding:14px calc(16px + env(safe-area-inset-right,0px))
+                   12px calc(16px + env(safe-area-inset-left,0px));
+           padding-top:calc(14px + env(safe-area-inset-top,0px));
+           position:sticky; top:0; background:var(--bg); z-index:5; }
+  header .hrow { display:flex; align-items:center; gap:10px; }
+  header .htext { flex:1; min-width:0; }
+  header small { color:var(--muted); font-weight:400; font-size:12px; display:block; margin-top:2px;
+                 overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #reload { flex:none; width:44px; height:44px; font-size:20px; line-height:1; border-radius:11px;
+            background:var(--card); color:var(--accent); border:1px solid var(--line); }
+  .modes { display:flex; gap:6px; margin-top:10px; }
+  .modes button { flex:1; padding:9px; font-size:14px; font-weight:600; border-radius:10px;
+                  border:1px solid var(--line); background:var(--card); color:var(--muted); }
+  .modes button.on { background:var(--accent); color:#fff; border-color:transparent; }
+  main { max-width:760px; margin:0 auto;
+         padding:14px calc(14px + env(safe-area-inset-right,0px))
+                 calc(28px + env(safe-area-inset-bottom,0px)) calc(14px + env(safe-area-inset-left,0px)); }
+  h2 { font-size:14px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
+       margin:22px 0 8px; font-weight:600; }
+  h2:first-child { margin-top:4px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:12px 0 5px; }
+  /* 16px on every field, always: below that iOS zooms the page on focus, and a zoom halfway
+     down a 54-row list throws away where you were. Density comes from the padding instead. */
+  textarea, input[type=text], select {
+    width:100%; padding:12px; font-size:16px; background:var(--card); color:var(--text);
+    border:1px solid var(--line); border-radius:10px; }
+  .card textarea, .card select, .card input[type=text] { background:var(--bg); }
+  textarea { min-height:72px; resize:vertical; line-height:1.4; }
+  .row { display:flex; gap:8px; } .row > * { flex:1; min-width:0; }
+  .check { display:flex; align-items:center; gap:9px; margin-top:12px; font-size:15px; }
+  .check input { width:20px; height:20px; accent-color:var(--accent); flex:none; }
+  button { font-family:inherit; cursor:pointer; }
+  button:disabled { cursor:default; }
+  .btn { padding:12px 14px; font-size:15px; border-radius:10px; border:1px solid var(--line);
+         background:#2a2640; color:var(--text); }
+  .btn.primary { background:var(--accent); color:#fff; border:none; font-weight:700; }
+  .btn:disabled { opacity:.5; }
+  .wide { width:100%; margin-top:14px; padding:15px; font-size:17px; }
+  .iconbtn { flex:none; width:46px; height:46px; font-size:19px; line-height:1; border-radius:11px;
+             border:1px solid var(--line); background:#2a2640; color:var(--text); }
+  .hint { font-size:12.5px; color:var(--muted); margin-top:8px; line-height:1.45; }
+  .dim { color:var(--muted); font-size:13.5px; }
+  .warn { color:var(--warn); font-size:12.5px; margin-top:8px; }
+  .err { color:var(--bad); }
+  .acts { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  .acts button, .acts a { flex:1 1 30%; text-align:center; padding:11px; font-size:14px;
+    border-radius:9px; border:1px solid var(--line); background:#2a2640; color:var(--text);
+    text-decoration:none; }
+  #libStatus, #addStatus { display:none; margin-top:12px; font-size:14px; line-height:1.45; }
+  .segtoggle { padding:5px 9px; font-size:12px; border-radius:8px; border:1px solid var(--line);
+               background:#2a2640; color:var(--muted); }
+  .segtoggle .caret { display:inline-block; width:9px; transition:transform .12s; }
+  .segtoggle.open .caret { transform:rotate(90deg); }
+  .tnum { font-variant-numeric:tabular-nums; }
+  /* Out of sight but still a real control: display:none is what makes a label stop opening the
+     file picker in some browsers, and the picker is the only way to change a cover. */
+  .offscreen { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
+
+  /* ---- the shelf ---- */
+  .bookgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(104px,1fr)); gap:14px; }
+  .bookcard { cursor:pointer; min-width:0; }
+  .bookcard .art { width:100%; aspect-ratio:2/3; border-radius:9px; overflow:hidden;
+                   background:#2a2640; border:1px solid var(--line); display:flex;
+                   align-items:center; justify-content:center; position:relative; }
+  /* contain, not cover. Archive.org artwork is usually a square tile with the title set as text
+     inside the picture, and cropping a square into a 2/3 box takes a third off the top and the
+     bottom — which is exactly where the title is. Letterboxed against the box's own background
+     instead, so a square cover is padded and a proper tall cover still fills the cell. */
+  .bookcard .art img { width:100%; height:100%; object-fit:contain; display:block; }
+  .bookcard .art .noart { font-size:26px; opacity:.5; }
+  /* On the cover rather than under it: the cell is 104px wide and the title needs the room. */
+  .bookcard .badge { position:absolute; left:5px; bottom:5px; font-size:10px; font-weight:700;
+                     padding:2px 6px; border-radius:6px; background:rgba(18,16,28,.82);
+                     color:var(--ok); box-shadow:0 1px 4px rgba(0,0,0,.4); }
+  .bookcard .badge.no { color:var(--muted); font-weight:600; }
+  .bookcard .badge.busy { color:var(--accent); }
+  .bookcard .bt { font-size:13px; margin-top:6px; line-height:1.3; overflow:hidden;
+                  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+  .bookcard .ba { font-size:11.5px; color:var(--muted); overflow:hidden;
+                  text-overflow:ellipsis; white-space:nowrap; }
+  .bookcard .bmeta { font-size:11px; color:var(--muted); margin-top:2px; }
+
+  /* ---- one book ---- */
+  .chapbar { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+  .chapbar .back { flex:none; padding:9px 12px; font-size:14px; border-radius:9px;
+                   border:1px solid var(--line); background:#2a2640; color:var(--text); }
+  .bookhead { display:flex; gap:14px; align-items:flex-start; }
+  .coverwrap { flex:none; width:104px; }
+  /* contain here too, and for a stronger reason: this is the picture you're deciding whether to
+     replace, so its real shape has to show rather than be cropped into looking right. */
+  #bookCover { width:100%; aspect-ratio:2/3; object-fit:contain; border-radius:9px;
+               background:#2a2640; border:1px solid var(--line); display:block; }
+  .coverwrap .replace { display:block; width:100%; margin-top:6px; padding:7px; font-size:12px;
+                        text-align:center; border-radius:8px; border:1px solid var(--line);
+                        background:#2a2640; color:var(--muted); cursor:pointer; }
+  .bookmeta { flex:1; min-width:0; }
+  .bookmeta h1 { font-size:19px; margin:0 0 4px; line-height:1.25; word-break:break-word; }
+  .bookmeta .ba { font-size:14px; color:var(--muted); }
+  .bookmeta .bf { font-size:12.5px; color:var(--muted); margin-top:8px; }
+
+  /* ---- the chapter names, which are also the track list ---- */
+  /* Only the bar is sticky, and it holds two controls, so Save is in reach from row 400 without
+     scrolling back to the top of a 54-row book. */
+  #namesBar { position:sticky; top:calc(var(--hh) + env(safe-area-inset-top,0px)); z-index:4;
+              display:flex; align-items:center; gap:8px; background:var(--card);
+              margin:-12px -12px 8px; padding:10px 12px; border-radius:12px 12px 0 0;
+              border-bottom:1px solid var(--line); }
+  #namesBar .src { flex:1; min-width:0; font-size:11.5px; color:var(--muted);
+                   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #saveNames { flex:none; padding:9px 12px; font-size:13px; font-weight:700; border-radius:9px;
+               border:1px solid var(--line); background:#2a2640; color:var(--muted); }
+  #saveNames.on { background:var(--accent); color:#fff; border-color:transparent; }
+  #namesTools { border-bottom:1px solid var(--line); padding-bottom:12px; margin-bottom:8px; }
+  #namesTools .btn { padding:9px 11px; font-size:13.5px; }
+  #namesTools label { margin-top:14px; }
+  #namesTools label:first-child { margin-top:2px; }
+  .nrow { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:5px 0;
+          border-top:1px solid var(--line); border-left:2px solid transparent; padding-left:6px; }
+  .nrow:first-child { border-top:none; }
+  .nrow.now { border-left-color:var(--accent); }
+  .nrow.empty .nm { border-color:#7a2f42; }
+  /* The track number is the play button. One control instead of two saves 40 px of a 340 px
+     phone row, and hearing track 12 is the only way to know what it is. */
+  .np { flex:none; width:44px; height:40px; border-radius:9px; border:1px solid var(--line);
+        background:#2a2640; color:var(--muted); font-size:13px; font-weight:700;
+        font-variant-numeric:tabular-nums; }
+  .nrow.now .np { background:var(--accent); color:#fff; border-color:transparent; }
+  .nm { flex:1 1 160px; min-width:0; padding:9px 10px; }
+  .nrow.edited .nm { border-color:#4b4270; }
+  .nrow .dot { flex:none; width:6px; height:6px; border-radius:50%; background:transparent; }
+  .nrow.edited .dot { background:var(--accent); }
+  /* What the file is actually called, shown only while it differs from the name being given it.
+     So a fresh book shows none — the stem is already in the field — and a book loaded from
+     names.txt shows them all, which is exactly when the cross-reference is wanted. */
+  .nf { flex:0 0 100%; font-size:11px; color:var(--muted); padding-left:52px;
+        overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #namesWarn { margin-top:10px; }
+
+  /* ---- adding one ---- */
+  .res { display:flex; align-items:center; gap:10px; padding:11px 0; cursor:pointer;
+         border-top:1px solid var(--line); }
+  .res:first-child { border-top:none; }
+  .res .rt { flex:1; min-width:0; }
+  .res .rn { font-size:14.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .res .rd { font-size:11.5px; color:var(--muted); margin-top:2px; overflow:hidden;
+             text-overflow:ellipsis; white-space:nowrap; }
+  .res .rr { flex:none; font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .res.on { border-left:2px solid var(--accent); padding-left:8px; }
+  .prevhead { display:flex; gap:14px; align-items:flex-start; }
+  .prevhead img { flex:none; width:96px; aspect-ratio:2/3; object-fit:contain; border-radius:9px;
+                  background:#2a2640; border:1px solid var(--line); }
+  .prevhead .pt { flex:1; min-width:0; }
+  .prevhead h3 { font-size:17px; margin:0 0 4px; line-height:1.25; word-break:break-word; }
+  .facts { font-size:12.5px; color:var(--muted); margin-top:8px; line-height:1.5; }
+  .lic { font-size:12px; margin-top:6px; word-break:break-all; }
+  .lic a { color:var(--muted); }
+  .lic.no { color:var(--warn); }
+  .prow { display:flex; align-items:center; gap:9px; padding:6px 0; font-size:13.5px;
+          border-top:1px solid var(--line); }
+  .prow:first-child { border-top:none; }
+  .prow .pn { flex:none; width:40px; height:34px; border-radius:8px; border:1px solid var(--line);
+              background:#2a2640; color:var(--muted); font-size:12px; font-weight:700;
+              font-variant-numeric:tabular-nums; }
+  .prow.now .pn { background:var(--accent); color:#fff; border-color:transparent; }
+  .prow .ptx { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .prow .pmb { flex:none; font-size:11.5px; color:var(--muted); }
+
+  /* ---- the job ---- */
+  /* Fixed rather than placed in a view, for the same reason the player is: a ten-minute encode
+     has to survive wandering off to the shelf. */
+  #jobCard { position:fixed; left:0; right:0; bottom:0; z-index:15; background:var(--card);
+             border-top:1px solid var(--line); }
+  .jobin { max-width:760px; margin:0 auto;
+           padding:9px calc(12px + env(safe-area-inset-right,0px))
+                   calc(9px + env(safe-area-inset-bottom,0px)) calc(12px + env(safe-area-inset-left,0px)); }
+  .jobrow { display:flex; align-items:center; gap:9px; }
+  .jobrow .jt { flex:1; min-width:0; font-size:12.5px; overflow:hidden; text-overflow:ellipsis;
+                white-space:nowrap; }
+  .jobrow .jt b { display:block; font-size:11px; color:var(--muted); font-weight:600; }
+  .jobrow button { flex:none; width:34px; height:34px; font-size:15px; line-height:1;
+                   border-radius:9px; border:1px solid var(--line); background:#2a2640;
+                   color:var(--text); }
+  .jobbar { height:3px; border-radius:2px; background:#2a2640; margin-top:7px; overflow:hidden; }
+  .jobbar i { display:block; height:100%; background:var(--accent); transition:width .4s; }
+  .joblog { margin-top:9px; max-height:45vh; overflow:auto; white-space:pre-wrap;
+            word-break:break-word; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+            font-size:12px; line-height:1.45; color:var(--muted);
+            -webkit-user-select:text; user-select:text; }
+  body.working main { padding-bottom:calc(96px + env(safe-area-inset-bottom,0px)); }
+  body.working.playing main { padding-bottom:calc(190px + env(safe-area-inset-bottom,0px)); }
+  body.playing #jobCard { bottom:calc(104px + env(safe-area-inset-bottom,0px)); }
+
+  /* ---- the player ---- */
+  #miniPlayer { position:fixed; left:0; right:0; bottom:0; z-index:20; background:var(--bg);
+                border-top:1px solid var(--line); }
+  .mpbar { max-width:760px; margin:0 auto;
+           padding:8px calc(12px + env(safe-area-inset-right,0px))
+                   calc(8px + env(safe-area-inset-bottom,0px)) calc(12px + env(safe-area-inset-left,0px)); }
+  .mprow { display:flex; align-items:center; gap:10px; }
+  #mpCover { flex:none; width:38px; height:38px; object-fit:cover; border-radius:6px;
+             background:var(--card); }
+  .mptext { flex:1; min-width:0; text-align:left; padding:0; border:none; background:none;
+            color:var(--text); font:inherit; cursor:pointer; }
+  .mpchap { font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis;
+            white-space:nowrap; }
+  .mpbook { font-size:11.5px; color:var(--muted); overflow:hidden; text-overflow:ellipsis;
+            white-space:nowrap; margin-top:1px; }
+  /* A 72px range input isn't something a thumb can set, so the speed is a button that says what
+     it is and opens the list of the ones worth having. */
+  .mpspeed { flex:none; position:relative; }
+  #mpSpeed { width:auto; min-width:56px; height:34px; padding:0 8px; gap:4px; font-size:12px;
+             display:flex; align-items:center; justify-content:center; }
+  #mpSpeedVal { font-size:12.5px; font-weight:700; }
+  .speedmenu { position:absolute; right:0; bottom:calc(100% + 8px); z-index:30; padding:5px;
+               background:var(--card); border:1px solid var(--line); border-radius:11px;
+               box-shadow:0 8px 24px rgba(0,0,0,.5); }
+  .speedmenu button { display:block; width:100%; min-width:88px; text-align:right;
+                      padding:10px 14px; border:none; border-radius:8px; background:none;
+                      color:var(--text); font:inherit; font-size:14.5px; }
+  .speedmenu button.on { color:var(--accent); font-weight:700; background:#2a2640; }
+  #mpClose { flex:none; width:34px; height:34px; font-size:19px; line-height:1; }
+  .mpseek { display:flex; align-items:center; gap:8px; margin-top:6px; }
+  #miniPlayer audio { flex:1; min-width:0; height:32px; display:block; }
+  .mpseek .iconbtn { flex:none; width:46px; height:32px; font-size:12px; font-weight:700;
+                     letter-spacing:-.3px; }
+  body.playing main { padding-bottom:calc(112px + env(safe-area-inset-bottom,0px)); }
+
+  #toast { position:fixed; z-index:40; left:12px; right:12px; margin:0 auto; max-width:520px;
+           bottom:calc(16px + env(safe-area-inset-bottom,0px));
+           padding:13px 16px; border-radius:12px; background:#332e4e; color:var(--text);
+           border:1px solid var(--line); box-shadow:0 8px 28px #000a; font-size:14.5px;
+           line-height:1.4; text-align:center; transition:opacity .25s, transform .25s; }
+  body.playing #toast { bottom:calc(112px + env(safe-area-inset-bottom,0px)); }
+  body.working #toast { bottom:calc(100px + env(safe-area-inset-bottom,0px)); }
+  body.working.playing #toast { bottom:calc(194px + env(safe-area-inset-bottom,0px)); }
+  #toast.going { opacity:0; transform:translateY(8px); }
+  .spin { display:inline-block; width:15px; height:15px; border:2px solid var(--muted);
+          border-top-color:var(--accent); border-radius:50%; animation:s .8s linear infinite;
+          vertical-align:-2px; margin-right:7px; }
+  @keyframes s { to { transform:rotate(360deg); } }
+  @media (max-width:420px){
+    .mpseek .iconbtn { width:40px; font-size:11px; }
+    #mpSpeed { min-width:50px; padding:0 5px; }
+    .nf { padding-left:0; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="hrow">
+    <div class="htext">
+      🎧 Audiobooks
+      <small id="where">the shelf</small>
+    </div>
+    <button id="reload" title="Reload the shelf" aria-label="Reload the shelf">↻</button>
+  </div>
+  <nav class="modes">
+    <button id="mLibrary" class="on">Shelf</button>
+    <button id="mAdd">Add a book</button>
+  </nav>
+</header>
+
+<main id="libraryView">
+  <div id="shelf">
+    <h2>Your books</h2>
+    <div class="card" id="bookGrid"><p class="dim">Reading the shelf…</p></div>
+    <button class="btn wide" id="allArtwork" hidden></button>
+    <button class="btn primary wide" id="addFromArchive">＋ Add one from archive.org</button>
+    <div id="libStatus"></div>
+  </div>
+
+  <div id="bookDetail" hidden>
+    <div class="chapbar">
+      <button class="back" id="backToShelf">‹ Shelf</button>
+    </div>
+    <div class="bookhead">
+      <div class="coverwrap">
+        <img id="bookCover" alt="">
+        <label class="replace" for="coverFile">Replace cover</label>
+        <button class="replace" id="fromTracks" hidden></button>
+        <input type="file" id="coverFile" accept="image/*" class="offscreen">
+      </div>
+      <div class="bookmeta">
+        <h1 id="bookTitle"></h1>
+        <div class="ba" id="bookAuthor"></div>
+        <div class="bf" id="bookFacts"></div>
+      </div>
+    </div>
+
+    <h2>The audiobook</h2>
+    <div class="card" id="m4bCard"></div>
+
+    <h2 id="namesHead">Chapter names</h2>
+    <div class="card" id="namesCard">
+      <div id="namesBar">
+        <button class="segtoggle" id="toolsToggle"><span class="caret">▸</span> Tools</button>
+        <span class="src" id="namesSrc"></span>
+        <button id="saveNames" disabled>Saved</button>
+      </div>
+      <div id="namesTools" hidden>
+        <label for="pasteBox">Paste the whole list — one name per line, in playing order</label>
+        <textarea id="pasteBox" placeholder="Chapter 01 - Prologue&#10;Chapter 02 - …"></textarea>
+        <div class="row" style="margin-top:8px">
+          <button class="btn" id="pasteFill">Fill from the list</button>
+        </div>
+        <div class="hint" id="pasteCount"></div>
+
+        <label for="patternBox">Or a pattern — {n}, {n0} and {stem}</label>
+        <div class="row">
+          <input type="text" id="patternBox" value="Chapter {n}">
+          <button class="btn" id="patternApply" style="flex:0 0 auto">Apply</button>
+        </div>
+
+        <label for="findBox">Find and replace, plain text</label>
+        <div class="row">
+          <input type="text" id="findBox" placeholder="Disc 1 - Track ">
+          <input type="text" id="replBox" placeholder="Chapter ">
+          <button class="btn" id="replApply" style="flex:0 0 auto">Go</button>
+        </div>
+
+        <div class="acts">
+          <button class="btn" id="resetNames">↺ Back to the filenames</button>
+        </div>
+      </div>
+      <button class="btn wide" id="showRows" hidden></button>
+      <div id="trackList"></div>
+      <div id="namesWarn" class="warn" hidden></div>
+    </div>
+
+    <div class="check">
+      <input type="checkbox" id="announce">
+      <label for="announce" style="margin:0">Open it with the title and author, read aloud</label>
+    </div>
+    <button class="btn primary wide" id="buildBtn">🔨 Build the audiobook</button>
+    <div class="hint">Saves the names first, then encodes — a few minutes, and you can leave this
+      page while it runs.</div>
+  </div>
+</main>
+
+<main id="addView" hidden>
+  <h2>Find a recording</h2>
+  <div class="card">
+    <form id="searchForm">
+      <div class="row">
+        <input type="text" id="q" placeholder="the time machine" enterkeyhint="search"
+               autocapitalize="none" autocorrect="off" spellcheck="false">
+        <button class="btn primary" id="searchBtn" style="flex:0 0 auto" type="submit">🔍</button>
+      </div>
+      <select id="coll" style="margin-top:8px">
+        <option value="librivoxaudio">LibriVox — volunteers reading public-domain books</option>
+        <option value="any">All of archive.org's audio</option>
+      </select>
+      <div class="hint">An identifier or any archive.org URL works here too — paste it and press
+        the magnifier.</div>
+    </form>
+  </div>
+  <div id="addStatus"></div>
+  <div id="hits" hidden></div>
+  <div id="preview" hidden></div>
+</main>
+
+<div id="jobCard" hidden>
+  <div class="jobin">
+    <div class="jobrow">
+      <span id="jobSpin" class="spin"></span>
+      <div class="jt"><span id="jobNow"></span><b id="jobLabel"></b></div>
+      <button id="jobToggle" title="Show what it's saying" aria-label="Show what it's saying">▸</button>
+      <button id="jobStop" title="Stop it" aria-label="Stop it">✕</button>
+    </div>
+    <div class="jobbar" id="jobBar" hidden><i style="width:0"></i></div>
+    <div class="joblog" id="jobLog" hidden></div>
+  </div>
+</div>
+
+<div id="miniPlayer" hidden>
+  <div class="mpbar">
+    <div class="mprow">
+      <img id="mpCover" alt="">
+      <button class="mptext" id="mpOpen" title="Go to this book">
+        <div class="mpchap" id="mpChapter"></div>
+        <div class="mpbook" id="mpBook"></div>
+      </button>
+      <div class="mpspeed">
+        <button class="iconbtn" id="mpSpeed" aria-haspopup="true" aria-expanded="false"
+                title="Playback speed">×<span id="mpSpeedVal">1</span></button>
+        <div class="speedmenu" id="speedMenu" hidden></div>
+      </div>
+      <button class="iconbtn" id="mpClose" title="Stop" aria-label="Stop">✕</button>
+    </div>
+    <div class="mpseek">
+      <button id="mpBack" class="iconbtn" title="Back 10 seconds" aria-label="Back 10 seconds">↺10</button>
+      <audio id="au" controls preload="none"></audio>
+      <button id="mpFwd" class="iconbtn" title="Forward 30 seconds" aria-label="Forward 30 seconds">30↻</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" hidden></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g,
+  c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// Book ids and filenames are whatever the folder is called — spaces, apostrophes, commas, and
+// occasionally a # that would silently cut a URL in half. Every segment goes through this.
+const u = (...p) => p.map(encodeURIComponent).join("/");
+const mb = n => (n >= 1000 ? (n/1000).toFixed(1) + " GB" : Math.round(n) + " MB");
+const fmt = s => { s = Math.round(s||0); return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`; };
+
+// remember the picks that are annoying to redo on a phone
+const store = {
+  get(k, d){ try { return localStorage.getItem("ab."+k) ?? d; } catch(e){ return d; } },
+  set(k, v){ try { localStorage.setItem("ab."+k, v); } catch(e){} },
+  drop(k){ try { localStorage.removeItem("ab."+k); } catch(e){} },
+};
+
+// A download inside a home-screen app is a trap on iOS: the file lands on a full-screen
+// "Open in…" splash with no chrome behind it, and a standalone app has no back button, so the
+// only way out is force-quitting it (WebKit 236943). target="_blank" hands it to Safari, which
+// has a toolbar and puts the file in Files where BookPlayer can take it. navigator.standalone is
+// true only for the home-screen copy, so every other browser keeps the plain download.
+const homeScreenApp = navigator.standalone === true;
+const downloadLink = (url, label) => homeScreenApp
+  ? `<a href="${url}" target="_blank" rel="noopener">${label}</a>`
+  : `<a href="${url}" download>${label}</a>`;
+
+let MODE = "library";     // which <main> is up
+let BOOKS = [];           // the shelf
+let BOOK = null;          // the book open in the detail view
+let SAVED = [];           // chapter names as the server last confirmed them
+let NOW = null;           // what's playing, which is not the same as what's on screen
+let ALBUM = null;         // the book it's working through — kept apart from BOOK, so leaving the
+                          // book's page doesn't stop it chaining to the next track
+let SPEED = parseFloat(store.get("speed", "1")) || 1;
+let JOB = null;           // {id, book, label, next}
+let jobTimer = null, jobToken = 0;
+let HITS = [];
+let ITEM = null;          // the previewed archive.org item
+let draftTimer = null;
+
+function setStatus(html, err=false){
+  const el = MODE === "add" ? $("#addStatus") : $("#libStatus");
+  el.style.display = html ? "block" : "none";
+  el.className = err ? "err" : "";
+  el.innerHTML = html;
+}
+
+// Feedback for a tap, where the tap was: on a 54-row list the status line is several screens
+// below the row you touched, so a save that had worked looked exactly like a tap that missed.
+let toastGoing = null, toastGone = null;
+function toast(html, ms=4000){
+  const el = $("#toast");
+  el.innerHTML = html;
+  el.hidden = false;
+  el.classList.remove("going");
+  clearTimeout(toastGoing); clearTimeout(toastGone);
+  toastGoing = setTimeout(()=>{
+    el.classList.add("going");
+    toastGone = setTimeout(()=>{ el.hidden = true; }, 300);
+  }, ms);
+}
+$("#toast").addEventListener("click", ()=>{
+  clearTimeout(toastGoing); clearTimeout(toastGone);
+  $("#toast").hidden = true;
+});
+
+// Every endpoint answers {"error": "a sentence"} when it refuses, and the sentences come from
+// audiobook.py itself, so they're worth showing as they are.
+async function api(url, opts){
+  const r = await fetch(url, opts);
+  let d = {};
+  try { d = await r.json(); } catch(e){}
+  if(!r.ok) throw new Error(d.error || `the server said ${r.status}`);
+  return d;
+}
+
+const coverUrl = b => `/file/${u(b.id)}/cover.jpg?v=${b.cover_v || 0}`;
+
+// ---- modes ----
+
+function setMode(m){
+  MODE = m;
+  $("#libraryView").hidden = m !== "library";
+  $("#addView").hidden = m !== "add";
+  $("#mLibrary").classList.toggle("on", m === "library");
+  $("#mAdd").classList.toggle("on", m === "add");
+  setStatus("");
+  window.scrollTo(0, 0);
+}
+$("#mLibrary").addEventListener("click", ()=> setMode("library"));
+$("#mAdd").addEventListener("click", ()=>{ setMode("add"); $("#q").focus(); });
+$("#addFromArchive").addEventListener("click", ()=>{ setMode("add"); $("#q").focus(); });
+$("#reload").addEventListener("click", async ()=>{
+  await loadBooks();
+  if(BOOK) await openBook(BOOK.id);
+  toast("Reloaded.", 1500);
+});
+
+// ---- the shelf ----
+
+async function loadBooks(){
+  try {
+    const d = await api("/api/books");
+    BOOKS = d.books || [];
+    $("#where").textContent = d.root;
+  } catch(e){ setStatus("❌ " + e.message, true); return; }
+  renderShelf();
+  // A job started before this page was loaded — or before it was reloaded mid-encode — is still
+  // running in the server. Pick it back up rather than leaving it invisible.
+  const busy = BOOKS.find(b => b.job);
+  if(busy && !JOB) adoptJob(busy.job.id, busy.id, busy.title);
+}
+
+function renderShelf(){
+  const box = $("#bookGrid");
+  if(!BOOKS.length){
+    box.className = "card";
+    box.innerHTML = '<p class="dim">Nothing on the shelf yet — add one from archive.org.</p>';
+    return;
+  }
+  box.className = "bookgrid";
+  box.innerHTML = "";
+  BOOKS.forEach(b => {
+    const el = document.createElement("div");
+    el.className = "bookcard";
+    const badge = b.job ? '<span class="badge busy">working…</span>'
+                : b.m4b ? '<span class="badge">✓ .m4b</span>'
+                        : '<span class="badge no">no .m4b</span>';
+    el.innerHTML = `<div class="art">
+        <img src="${coverUrl(b)}" alt="" loading="lazy">
+        <span class="noart" hidden>🎧</span>${badge}
+      </div>
+      <div class="bt">${esc(b.title)}</div>
+      <div class="ba">${esc(b.author || "")}</div>
+      <div class="bmeta">${b.tracks} track${b.tracks === 1 ? "" : "s"}${
+        b.runtime ? " · " + esc(b.runtime) : ""}</div>`;
+    // Always ask for the cover and fall back on the error, rather than trusting a flag — a
+    // cover that vanished off disk shouldn't leave a broken picture on the shelf.
+    const img = el.querySelector("img");
+    img.addEventListener("error", ()=>{
+      img.remove();
+      el.querySelector(".noart").hidden = false;
+    });
+    el.addEventListener("click", ()=> openBook(b.id));
+    box.appendChild(el);
+  });
+  // A freshly sorted series is a dozen books with no cover.jpg and the artwork sitting inside
+  // every one of their tracks. Clicking into each of them to press the same button isn't an
+  // interface, so offer it once for the lot.
+  const waiting = BOOKS.filter(b => !b.cover && b.art).length;
+  const all = $("#allArtwork");
+  all.hidden = !waiting;
+  all.textContent = `🖼 Take the covers out of the tracks · ${waiting} book${
+    waiting === 1 ? "" : "s"}`;
+}
+
+$("#allArtwork").addEventListener("click", async ()=>{
+  const btn = $("#allArtwork");
+  btn.disabled = true;
+  setStatus('<span class="spin"></span>Looking inside the tracks…');
+  try {
+    const d = await api("/api/artwork", {method:"POST"});
+    await loadBooks();
+    const missed = d.skipped.length;
+    setStatus(`Took ${d.done.length} cover${d.done.length === 1 ? "" : "s"} out of the tracks.`
+      + (missed ? ` ${missed} had nothing to take: `
+                  + d.skipped.map(s => esc(s.id)).join(", ") + "." : ""));
+  } catch(e){ setStatus("❌ " + esc(e.message), true); }
+  btn.disabled = false;
+});
+
+// ---- one book ----
+
+async function openBook(id){
+  let d;
+  try { d = await api("/api/books/" + u(id)); }
+  catch(e){ setStatus("❌ " + e.message, true); return; }
+  BOOK = d;
+  SAVED = d.names.names.slice();
+  $("#shelf").hidden = true;
+  $("#bookDetail").hidden = false;
+  $("#bookTitle").textContent = d.title;
+  $("#bookAuthor").textContent = d.author || "nobody named";
+  $("#bookFacts").textContent = [
+    `${d.tracks.length} track${d.tracks.length === 1 ? "" : "s"}`,
+    d.runtime, mb(d.mb)].filter(Boolean).join(" · ");
+  const cover = $("#bookCover");
+  cover.src = coverUrl(d);
+  cover.onerror = ()=> { cover.removeAttribute("src"); };
+  // No cover.jpg, but the tracks are carrying one. It's the same picture a player would show, it
+  // just isn't anywhere build_m4b can reach it.
+  const from = $("#fromTracks");
+  from.hidden = !d.art;
+  if(d.art) from.textContent = `🖼 Use the tracks' own (${d.art.width}×${d.art.height})`;
+  renderM4b();
+  renderNames();
+  restoreDraft();
+  $("#buildBtn").innerHTML = d.m4b ? "🔄 Rebuild the audiobook" : "🔨 Build the audiobook";
+  $("#announce").checked = store.get("announce", "") === "1";
+  window.scrollTo(0, 0);
+}
+
+function closeBook(){
+  if(dirtyCount() && !confirm(`${dirtyCount()} chapter name(s) aren't saved. Leave anyway?`))
+    return;
+  BOOK = null;
+  $("#trackList").innerHTML = "";
+  $("#bookDetail").hidden = true;
+  $("#shelf").hidden = false;
+  loadBooks();
+}
+$("#backToShelf").addEventListener("click", closeBook);
+
+function renderM4b(){
+  const box = $("#m4bCard");
+  if(!BOOK.m4b){
+    box.innerHTML = '<p class="dim">No audiobook file yet. Give the chapters their names below, '
+      + 'then build it.</p>';
+    return;
+  }
+  const m = BOOK.m4b;
+  const file = `/file/${u(BOOK.id)}/${u(m.name)}`;
+  box.innerHTML = `<div style="font-size:14px;word-break:break-word">${esc(m.name)}</div>
+    <div class="hint">${mb(m.mb)}${m.runtime ? " · " + esc(m.runtime) : ""}${
+      m.chapters.length ? " · " + m.chapters.length + " chapters" : ""}</div>
+    <div class="acts">
+      <button class="btn" id="playM4b">▶ Play</button>
+      ${downloadLink(homeScreenApp ? `/get/${u(BOOK.id)}/${u(m.name)}` : file + "?dl=1",
+                     "⬇ Download")}
+    </div>`;
+  $("#playM4b").addEventListener("click", ()=> playM4b());
+}
+
+// ---- the chapter names, which are also the track list ----
+
+function renderNames(){
+  const n = BOOK.tracks.length;
+  const said = {"names.txt": "from names.txt", "the .m4b": "from the built .m4b",
+                "stale": "names.txt didn't match — check these", "tracks": "from the filenames"};
+  $("#namesSrc").textContent = said[BOOK.names.source] || "";
+  $("#namesHead").textContent = `Chapter names (${n})`;
+  $("#trackList").innerHTML = BOOK.tracks.map((t, i) => {
+    const name = BOOK.names.names[i] ?? t.stem;
+    return `<div class="nrow" data-i="${i}">
+      <button class="np" type="button" title="Play this track">${t.n}</button>
+      <input class="nm" type="text" value="${esc(name)}"
+             enterkeyhint="${i === n - 1 ? "done" : "next"}"
+             autocapitalize="words" autocorrect="off" spellcheck="false">
+      <span class="dot"></span>
+      <div class="nf" hidden></div>
+    </div>`;
+  }).join("");
+  $$("#trackList .nrow").forEach(syncRow);
+  markDirty();
+  // A short book is open; six hundred rows are not. One threshold, no per-book memory.
+  foldNames(n > 60);
+}
+
+function foldNames(shut){
+  $("#trackList").hidden = shut;
+  $("#showRows").hidden = !shut;
+  $("#showRows").textContent = `Show all ${BOOK.tracks.length} rows`;
+  $("#namesWarn").hidden = shut || !$("#namesWarn").textContent;
+}
+$("#showRows").addEventListener("click", ()=> foldNames(false));
+
+const rows = () => $$("#trackList .nrow");
+const namesNow = () => rows().map(r => r.querySelector(".nm").value);
+
+function syncRow(row){
+  const i = +row.dataset.i;
+  const t = BOOK.tracks[i];
+  const value = row.querySelector(".nm").value;
+  const nf = row.querySelector(".nf");
+  const differs = value.trim() !== t.stem;
+  nf.textContent = differs ? t.file : "";
+  nf.hidden = !differs;
+  row.classList.toggle("edited", value !== (SAVED[i] ?? ""));
+  row.classList.toggle("empty", !value.trim());
+}
+
+// The DOM is the model — there's no parallel array to keep in step with it. SAVED is only what
+// the server last confirmed, and dirty is the difference between the two.
+function dirtyCount(){
+  if(!BOOK) return 0;
+  return namesNow().filter((v, i) => v !== (SAVED[i] ?? "")).length;
+}
+
+function markDirty(){
+  const dirty = dirtyCount();
+  const blank = rows().findIndex(r => !r.querySelector(".nm").value.trim());
+  const save = $("#saveNames");
+  save.textContent = dirty ? `Save ${dirty}` : "Saved";
+  save.classList.toggle("on", dirty > 0 && blank < 0);
+  save.disabled = !dirty || blank >= 0;
+  const warn = $("#namesWarn");
+  if(blank >= 0){
+    // Not a nudge: read_names counts lines, so a blank one would pair every name after it with
+    // the wrong track — and you'd find that out at minute nine of the encode.
+    warn.textContent = `Row ${blank + 1} has no name. The build counts lines, so an empty row `
+      + `would shift every chapter after it.`;
+    warn.hidden = $("#trackList").hidden;
+  } else {
+    warn.textContent = "";
+    warn.hidden = true;
+  }
+  $("#buildBtn").disabled = blank >= 0 || !!JOB;
+}
+
+$("#trackList").addEventListener("input", e => {
+  if(!e.target.classList.contains("nm")) return;
+  syncRow(e.target.closest(".nrow"));
+  markDirty();
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(saveDraft, 400);
+});
+
+// A spreadsheet should behave like one. On iOS this also beats the default, which is to close
+// the keyboard and leave you looking for the next field.
+$("#trackList").addEventListener("keydown", e => {
+  if(!e.target.classList.contains("nm")) return;
+  const i = +e.target.closest(".nrow").dataset.i;
+  if(e.key === "Enter"){ e.preventDefault(); focusRow(i + (e.shiftKey ? -1 : 1)); }
+  else if(e.key === "ArrowDown"){ e.preventDefault(); focusRow(i + 1); }
+  else if(e.key === "ArrowUp"){ e.preventDefault(); focusRow(i - 1); }
+});
+
+function focusRow(i){
+  const row = rows()[i];
+  if(!row) return;
+  const input = row.querySelector(".nm");
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
+// preventDefault on pointerdown, so tapping a play button doesn't pull focus out of the field
+// you're typing in — the keyboard stays up and the page doesn't reflow under your thumb.
+$("#trackList").addEventListener("pointerdown", e => {
+  if(e.target.classList.contains("np")) e.preventDefault();
+});
+$("#trackList").addEventListener("click", e => {
+  if(!e.target.classList.contains("np")) return;
+  playTrack(+e.target.closest(".nrow").dataset.i, BOOK);
+});
+
+$("#toolsToggle").addEventListener("click", ()=>{
+  const shut = $("#namesTools").hidden;
+  $("#namesTools").hidden = !shut;
+  $("#toolsToggle").classList.toggle("open", shut);
+});
+
+function setNames(list){
+  rows().forEach((r, i) => {
+    if(list[i] != null) r.querySelector(".nm").value = list[i];
+    syncRow(r);
+  });
+  markDirty();
+  saveDraft();
+}
+
+// Parsed exactly as read_names parses names.txt — blank lines and # comments dropped — so what
+// you paste in here behaves the same as the file you'd have edited by hand.
+const parseList = text => text.split(/\r?\n/).map(l => l.trim())
+  .filter(l => l && !l.startsWith("#"));
+
+$("#pasteBox").addEventListener("input", ()=>{
+  const got = parseList($("#pasteBox").value).length;
+  const want = BOOK ? BOOK.tracks.length : 0;
+  $("#pasteCount").textContent = !got ? ""
+    : got === want ? `${got} lines for ${want} tracks — that matches.`
+    : `${got} lines for ${want} tracks. Filling puts them against rows 1–${Math.min(got, want)}`
+      + (got < want ? ` and leaves the rest as they are.` : ` and drops the extra ${got - want}.`);
+});
+$("#pasteFill").addEventListener("click", ()=>{
+  const list = parseList($("#pasteBox").value);
+  if(!list.length){ toast("Nothing to fill from."); return; }
+  setNames(list);
+  toast(`Filled ${Math.min(list.length, BOOK.tracks.length)} row(s).`);
+});
+
+$("#patternApply").addEventListener("click", ()=>{
+  const tpl = $("#patternBox").value;
+  const wide = String(BOOK.tracks.length).length;
+  setNames(BOOK.tracks.map((t, i) => tpl
+    .replaceAll("{n}", String(i + 1))
+    .replaceAll("{n0}", String(i + 1).padStart(wide, "0"))
+    .replaceAll("{stem}", t.stem)));
+  toast(`Named all ${BOOK.tracks.length}.`);
+});
+
+// Plain substring, not a regular expression: a regex box on a phone keyboard is a trap, and what
+// this is actually for is turning "Disc 1 - Track " into "Chapter ".
+$("#replApply").addEventListener("click", ()=>{
+  const find = $("#findBox").value;
+  if(!find){ toast("Nothing to find."); return; }
+  const to = $("#replBox").value;
+  let hit = 0;
+  setNames(namesNow().map(v => {
+    if(!v.includes(find)) return v;
+    hit++;
+    return v.replaceAll(find, to);
+  }));
+  toast(hit ? `Changed ${hit} row(s).` : `Nothing had “${esc(find)}” in it.`);
+});
+
+$("#resetNames").addEventListener("click", ()=>{
+  setNames(BOOK.tracks.map(t => t.stem));
+  toast("Back to the filenames.");
+});
+
+// The draft is the one place worth more code than speech-webui spends: fifty-four hand-typed
+// chapter names on a phone that gets backgrounded and killed is not something to lose.
+const draftKey = () => "names." + (BOOK ? BOOK.id : "");
+function saveDraft(){
+  if(!BOOK) return;
+  if(!dirtyCount()) return store.drop(draftKey());
+  store.set(draftKey(), JSON.stringify(namesNow()));
+}
+function restoreDraft(){
+  const raw = store.get(draftKey(), null);
+  if(!raw) return;
+  let list;
+  try { list = JSON.parse(raw); } catch(e){ return store.drop(draftKey()); }
+  if(!Array.isArray(list) || list.length !== BOOK.tracks.length
+     || list.every((v, i) => v === SAVED[i])) return store.drop(draftKey());
+  if(confirm(`You have ${list.filter((v,i)=>v!==SAVED[i]).length} unsaved name(s) for this book `
+             + `from last time. Put them back?`)){
+    setNames(list);
+    toast("Restored — still not saved.");
+  } else {
+    store.drop(draftKey());
+  }
+}
+window.addEventListener("beforeunload", e => {
+  if(dirtyCount()){ e.preventDefault(); e.returnValue = ""; }
+});
+
+async function saveNames(){
+  const names = namesNow();
+  const d = await api("/api/books/" + u(BOOK.id) + "/names",
+    {method:"POST", headers:{"Content-Type":"application/json"},
+     body: JSON.stringify({names})});
+  // The server tidies what it writes — collapsed spaces, a stripped leading # — so take back
+  // what it actually saved rather than what was typed, or every row stays looking dirty.
+  SAVED = d.names.slice();
+  setNames(SAVED);
+  store.drop(draftKey());
+  BOOK.names.source = "names.txt";
+  $("#namesSrc").textContent = "from names.txt";
+  return d;
+}
+$("#saveNames").addEventListener("click", async ()=>{
+  try { const d = await saveNames(); toast(`Saved ${d.count} chapter names.`); }
+  catch(e){ toast("❌ " + esc(e.message), 7000); }
+});
+
+// ---- building ----
+
+$("#announce").addEventListener("change", e => store.set("announce", e.target.checked ? "1" : ""));
+
+$("#buildBtn").addEventListener("click", async ()=>{
+  // Always saved first. Offering to build with unsaved names would quietly encode the *old*
+  // file, which is precisely the mistake this page exists to remove.
+  const btn = $("#buildBtn");
+  btn.disabled = true;
+  try {
+    if(dirtyCount()) await saveNames();
+    const d = await api("/api/books/" + u(BOOK.id) + "/build",
+      {method:"POST", headers:{"Content-Type":"application/json"},
+       body: JSON.stringify({announce: $("#announce").checked})});
+    takeJob(d.job);
+  } catch(e){
+    toast("❌ " + esc(e.message), 7000);
+    btn.disabled = false;
+  }
+});
+
+// ---- the cover ----
+
+$("#coverFile").addEventListener("change", async e => {
+  const f = e.target.files[0];
+  e.target.value = "";                 // so the same file can be picked again
+  if(!f || !BOOK) return;
+  toast('<span class="spin"></span>Converting the cover…', 20000);
+  try {
+    // Raw bytes as the body, not multipart: the stdlib lost its multipart parser in 3.13, and a
+    // File is already something fetch can send with a Content-Length.
+    const d = await api("/api/books/" + u(BOOK.id) + "/cover",
+      {method:"POST", headers:{"Content-Type": f.type || "image/jpeg"}, body: f});
+    newCover(d.cover_v);
+    toast("Cover replaced. It goes into the .m4b next time you build.");
+  } catch(err){ toast("❌ " + esc(err.message), 7000); }
+});
+
+$("#fromTracks").addEventListener("click", async ()=>{
+  const btn = $("#fromTracks");
+  btn.disabled = true;
+  try {
+    const d = await api("/api/books/" + u(BOOK.id) + "/artwork", {method:"POST"});
+    newCover(d.cover_v);
+    toast(`Took the cover from the tracks — ${esc(d.from)}.`, 5000);
+  } catch(e){ toast("❌ " + esc(e.message), 7000); }
+  btn.disabled = false;
+});
+
+// One cover, arrived at either way: uploaded, or lifted out of the tracks. The shelf card and
+// anything playing carry the version too, or they keep showing the picture that's been replaced.
+function newCover(version){
+  BOOK.cover = true;
+  BOOK.cover_v = version;
+  BOOK.art = null;
+  $("#fromTracks").hidden = true;
+  const card = BOOKS.find(b => b.id === BOOK.id);
+  if(card){ card.cover = true; card.cover_v = version; card.art = false; renderShelf(); }
+  if(NOW && NOW.id === BOOK.id){ NOW.cover_v = version; showPlayer(); }
+  const cover = $("#bookCover");
+  cover.src = coverUrl(BOOK);
+}
+
+// ---- adding one from archive.org ----
+
+$("#searchForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const q = $("#q").value.trim();
+  if(!q) return;
+  $("#q").blur();
+  // A pasted URL names one item, so go straight to it. So does something shaped like an
+  // identifier — no spaces, and a digit or an underscore in it, which "hobbit" hasn't got — but
+  // that one falls back to searching rather than dead-ending if archive.org has no such item.
+  if(/archive\.org\//.test(q)){
+    $("#hits").hidden = true;
+    return previewItem(q);
+  }
+  if(/^[\w.-]{6,}$/.test(q) && /[\d_]/.test(q)){
+    $("#hits").hidden = true;
+    if(await previewItem(q, true)) return;
+  }
+  await runSearch(q, $("#coll").value);
+});
+
+async function runSearch(q, collection){
+  setStatus('<span class="spin"></span>Asking archive.org…');
+  $("#preview").hidden = true;
+  try {
+    const d = await api(`/api/search?q=${encodeURIComponent(q)}`
+      + `&collection=${encodeURIComponent(collection)}`);
+    HITS = d.results || [];
+    renderHits(d.where, q, collection);
+    setStatus("");
+  } catch(e){ setStatus("❌ " + esc(e.message), true); }
+}
+
+function renderHits(where, q, collection){
+  const box = $("#hits");
+  box.hidden = false;
+  if(!HITS.length){
+    // The CLI says where it looked and suggests widening it, because printing nothing reads as
+    // "no such book" when it's just as likely to be the wrong shelf. Same here, as a button.
+    box.className = "card";
+    box.innerHTML = `<p class="dim">Nothing in ${esc(where)} with that in the title.</p>`
+      + (collection === "any" ? ""
+         : `<button class="btn wide" id="widen">Try all of archive.org's audio</button>`);
+    const widen = $("#widen");
+    if(widen) widen.addEventListener("click", ()=>{
+      $("#coll").value = "any";
+      runSearch(q, "any");
+    });
+    return;
+  }
+  box.className = "card";
+  box.innerHTML = "";
+  HITS.forEach(h => {
+    const el = document.createElement("div");
+    el.className = "res";
+    el.innerHTML = `<div class="rt">
+        <div class="rn">${esc(h.title)}${h.have ? ' <span style="color:var(--ok)">· on the shelf</span>' : ""}</div>
+        <div class="rd">${esc(h.creator || "nobody named")} — ${esc(h.identifier)}</div>
+      </div>
+      <div class="rr">${esc(h.runtime || "")}</div>`;
+    el.addEventListener("click", ()=>{
+      $$("#hits .res").forEach(r => r.classList.remove("on"));
+      el.classList.add("on");
+      previewItem(h.identifier);
+    });
+    box.appendChild(el);
+  });
+}
+
+async function previewItem(id, quiet=false){
+  setStatus('<span class="spin"></span>Looking at what it holds…');
+  $("#preview").hidden = true;
+  try {
+    ITEM = await api("/api/item?id=" + encodeURIComponent(id));
+    renderPreview();
+    setStatus("");
+    $("#preview").scrollIntoView({behavior:"smooth", block:"start"});
+    return true;
+  } catch(e){
+    if(!quiet) setStatus("❌ " + esc(e.message), true);
+    return false;
+  }
+}
+
+function renderPreview(){
+  const p = ITEM;
+  const box = $("#preview");
+  box.hidden = false;
+  const licence = p.licence_url
+    ? `<div class="lic">Licence: <a href="${esc(p.licence_url)}" target="_blank" rel="noopener">${esc(p.licence_url)}</a></div>`
+    : `<div class="lic no">No licence stated — LibriVox recordings are public domain, but this one doesn't say so.</div>`;
+  box.innerHTML = `<h2>Before you commit</h2>
+    <div class="card">
+      <div class="prevhead">
+        ${p.cover_url ? `<img src="${esc(p.cover_url)}" alt="">` : ""}
+        <div class="pt">
+          <h3>${esc(p.title)}</h3>
+          <div class="ba" style="font-size:14px;color:var(--muted)">${esc(p.creator || "nobody named")}${p.date ? " · " + esc(p.date) : ""}</div>
+          <div class="facts">${p.tracks} tracks · ${esc(p.format)} · ${mb(p.mb)}${p.runtime ? " · " + esc(p.runtime) : ""}</div>
+          ${licence}
+          <div class="hint"><a href="${esc(p.page)}" target="_blank" rel="noopener" style="color:var(--muted)">the item on archive.org ↗</a></div>
+        </div>
+      </div>
+      ${p.already ? `<div class="warn">You already have this: ${p.already.have} track(s) on the shelf${p.already.m4b ? " and a built .m4b" : ", not yet built"}. Getting it again picks up whatever is missing.</div>` : ""}
+      <div class="hint">Tap a number to hear it — LibriVox readers vary, and some books change
+        reader partway through, so it's worth listening to one from the middle.</div>
+      <div id="prevList" style="margin-top:8px">${p.chapters.map(c =>
+        `<div class="prow" data-i="${c.n - 1}">
+           <button class="pn" type="button" title="Listen to this one">${c.n}</button>
+           <div class="ptx">${esc(c.name)}</div>
+           <div class="pmb">${c.mb} MB</div>
+         </div>`).join("")}</div>
+      ${p.formats.length > 1 ? `<label for="prevFmt">Which copy to fetch</label>
+        <select id="prevFmt">${p.formats.map(f =>
+          `<option value="${esc(f)}"${f === p.format ? " selected" : ""}>${esc(f)}</option>`).join("")}</select>` : ""}
+      <div class="check">
+        <input type="checkbox" id="getAnnounce">
+        <label for="getAnnounce" style="margin:0">Open it with the title and author, read aloud</label>
+      </div>
+      <button class="btn primary wide" id="getBtn">⬇ Get this book · ${mb(p.mb)}</button>
+      <div class="hint">Downloads the tracks, then builds one .m4b with chapter marks. You can
+        fix the chapter names afterwards and rebuild.</div>
+    </div>`;
+  $("#getAnnounce").checked = store.get("announce", "") === "1";
+  $("#getBtn").addEventListener("click", getBook);
+  // Straight at archive.org, not through this server: it already serves byte ranges — that's
+  // what the CLI's resuming is built on — so seeking works with nothing implemented here, and
+  // nothing is written to disk for a book you decide against.
+  $("#prevList").addEventListener("click", e => {
+    if(!e.target.classList.contains("pn")) return;
+    playSample(+e.target.closest(".prow").dataset.i);
+  });
+}
+
+async function getBook(){
+  const btn = $("#getBtn");
+  btn.disabled = true;
+  const fmt = $("#prevFmt");
+  try {
+    const d = await api("/api/get", {method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({identifier: ITEM.identifier,
+                            format: fmt ? fmt.value : null,
+                            announce: $("#getAnnounce").checked})});
+    takeJob(d.job);
+    setMode("library");
+    toast(`Getting “${esc(ITEM.title)}”. It'll appear on the shelf when it's done.`, 6000);
+  } catch(e){
+    toast("❌ " + esc(e.message), 7000);
+    btn.disabled = false;
+  }
+}
+
+// ---- the job ----
+
+function takeJob(job){
+  JOB = {id: job.id, book: job.book, label: job.label, next: 0};
+  document.body.classList.add("working");
+  $("#jobCard").hidden = false;
+  $("#jobLabel").textContent = (job.kind === "get" ? "getting " : "building ") + job.label;
+  $("#jobNow").textContent = job.now || "starting…";
+  $("#jobSpin").hidden = false;
+  $("#jobStop").textContent = "✕";
+  $("#jobStop").title = "Stop it";
+  $("#jobLog").textContent = "";
+  $("#jobBar").hidden = true;
+  $("#jobBar").firstElementChild.style.width = "0";
+  markDirty();
+  jobToken++;
+  pollJob(jobToken);
+}
+
+function adoptJob(id, book, label){
+  takeJob({id, book, label, kind: "build", now: "picking it back up…"});
+}
+
+async function pollJob(token){
+  if(!JOB || token !== jobToken) return;
+  let d;
+  try {
+    d = await api(`/api/jobs/${u(JOB.id)}?from=${JOB.next}`);
+  } catch(e){
+    // The server was restarted, or the job aged out of it. Say so rather than polling forever.
+    finishJob({status:"error", error:"lost track of it — the server may have restarted"});
+    return;
+  }
+  if(token !== jobToken) return;
+  if(d.reset) $("#jobLog").textContent = "";
+  JOB.next = d.next;
+  if(d.log) appendLog(d.log);
+  $("#jobNow").textContent = d.now || "";
+  const bar = $("#jobBar");
+  const pct = d.percent || (d.total ? Math.round(d.done / d.total * 100) : 0);
+  bar.hidden = !pct;
+  bar.firstElementChild.style.width = pct + "%";
+  if(d.status === "running" || d.status === "queued"){
+    jobTimer = setTimeout(()=> pollJob(token), 1500);
+    return;
+  }
+  finishJob(d);
+}
+
+function appendLog(text){
+  const log = $("#jobLog");
+  // Follow the tail, unless you've scrolled up to read something — then leave it where it is.
+  const following = log.scrollTop + log.clientHeight >= log.scrollHeight - 24;
+  log.textContent += text;
+  if(following) log.scrollTop = log.scrollHeight;
+}
+
+async function finishJob(d){
+  const was = JOB;
+  JOB = null;
+  clearTimeout(jobTimer);
+  jobToken++;
+  $("#jobSpin").hidden = true;
+  $("#jobStop").textContent = "✕";
+  $("#jobStop").title = "Dismiss";
+  $("#jobNow").textContent = d.error ? d.error.split("\n").pop() : (d.now || "done");
+  $("#buildBtn").disabled = false;
+  if(d.status === "done"){
+    toast(`✅ ${d.result ? esc(d.result) : "Done"}`, 6000);
+    // An error is 600 characters you need to read; a success isn't, so let it go by itself.
+    setTimeout(dismissJob, 4000);
+  } else if(d.status === "cancelled"){
+    toast("Stopped. Start it again and it carries on from where it got to.", 6000);
+  } else {
+    $("#jobLog").hidden = false;
+    $("#jobToggle").textContent = "▾";
+    if(d.error) appendLog("\n" + d.error + "\n");
+    toast("❌ It didn't finish — see the log at the bottom.", 8000);
+  }
+  await loadBooks();
+  if(BOOK && was && was.book === BOOK.id) await openBook(BOOK.id);
+  markDirty();
+}
+
+function dismissJob(){
+  if(JOB) return;
+  $("#jobCard").hidden = true;
+  $("#jobLog").hidden = true;
+  $("#jobToggle").textContent = "▸";
+  document.body.classList.remove("working");
+}
+
+$("#jobToggle").addEventListener("click", ()=>{
+  const log = $("#jobLog");
+  log.hidden = !log.hidden;
+  $("#jobToggle").textContent = log.hidden ? "▸" : "▾";
+  if(!log.hidden) log.scrollTop = log.scrollHeight;
+});
+$("#jobStop").addEventListener("click", async ()=>{
+  if(!JOB) return dismissJob();
+  if(!confirm("Stop it? Nothing is lost — a part-downloaded track carries on from where it "
+              + "stopped next time.")) return;
+  try { await api(`/api/jobs/${u(JOB.id)}/cancel`, {method:"POST"}); }
+  catch(e){ toast("❌ " + esc(e.message)); }
+});
+
+// ---- the player ----
+
+const au = () => $("#au");
+const SPEEDS = [0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+const BACK_SECONDS = 10, FORWARD_SECONDS = 30;
+const speedLabel = v => String(v).replace(/^0/, "");
+
+function play(now, src){
+  NOW = now;
+  showPlayer();
+  const a = au();
+  a.src = src;
+  a.playbackRate = SPEED;
+  a.play().catch(()=> toast("Tap ▶ on the player to start it."));
+  setMediaSession();
+  markPlaying();
+}
+
+function playM4b(){
+  play({kind:"m4b", id:BOOK.id, title:BOOK.title, author:BOOK.author, cover_v:BOOK.cover_v,
+        label:BOOK.m4b.name},
+       `/file/${u(BOOK.id)}/${u(BOOK.m4b.name)}`);
+}
+
+function playTrack(i, album){
+  ALBUM = album || ALBUM;
+  const t = ALBUM && ALBUM.tracks[i];
+  if(!t) return;
+  play({kind:"track", id:ALBUM.id, title:ALBUM.title, author:ALBUM.author,
+        cover_v:ALBUM.cover_v, label:t.file, i, count:ALBUM.tracks.length},
+       `/file/${u(ALBUM.id)}/${u(t.file)}`);
+}
+
+function playSample(i){
+  const c = ITEM.chapters[i];
+  if(!c) return;
+  play({kind:"sample", id:null, title:ITEM.title, author:ITEM.creator, cover:ITEM.cover_url,
+        label:c.name, i}, c.url);
+  toast("Straight from archive.org — nothing has been downloaded.", 3000);
+}
+
+function showPlayer(){
+  $("#miniPlayer").hidden = false;
+  document.body.classList.add("playing");
+  const cover = $("#mpCover");
+  const src = NOW.kind === "sample" ? (NOW.cover || "")
+            : coverUrl({id: NOW.id, cover_v: NOW.cover_v});
+  if(src) cover.src = src; else cover.removeAttribute("src");
+  $("#mpChapter").textContent = NOW.label || "";
+  $("#mpBook").textContent = NOW.title || "";
+}
+
+function stopPlayer(){
+  const a = au();
+  a.pause();
+  a.removeAttribute("src");
+  a.load();
+  NOW = null;
+  $("#miniPlayer").hidden = true;
+  document.body.classList.remove("playing");
+  markPlaying();
+}
+$("#mpClose").addEventListener("click", stopPlayer);
+$("#mpOpen").addEventListener("click", ()=>{
+  if(NOW && NOW.kind !== "sample" && NOW.id){ setMode("library"); openBook(NOW.id); }
+});
+
+// Moves the highlight without re-rendering: a re-render would throw away six hundred inputs,
+// where the focus was, and where you had scrolled to.
+function markPlaying(){
+  const mine = NOW && NOW.kind === "track" && BOOK && NOW.id === BOOK.id;
+  const at = mine ? NOW.i : -1;
+  if(BOOK) rows().forEach(r => {
+    const on = +r.dataset.i === at;
+    r.classList.toggle("now", on);
+    r.querySelector(".np").textContent = on ? "⏸" : BOOK.tracks[+r.dataset.i].n;
+  });
+  const sample = NOW && NOW.kind === "sample" ? NOW.i : -1;
+  $$("#prevList .prow").forEach(r => {
+    const on = +r.dataset.i === sample;
+    r.classList.toggle("now", on);
+    r.querySelector(".pn").textContent = on ? "⏸" : (+r.dataset.i + 1);
+  });
+}
+
+// One level of chaining, and only for tracks. Verifying a build otherwise means fifty-four taps,
+// and hearing 12 run straight into 13 is how you notice they're the same chapter twice.
+au().addEventListener("ended", ()=>{
+  if(NOW && NOW.kind === "track" && NOW.i + 1 < NOW.count) playTrack(NOW.i + 1);
+  else if(NOW && NOW.kind === "track") toast("That was the last track.");
+});
+
+// Backward stays inside the file it's in. Crossing into the previous track "five seconds before
+// its end" would need every track's length, and measuring six hundred MP3s to make a skip button
+// slightly nicer is not a trade worth making.
+function skip(delta){
+  const a = au();
+  if(!NOW) return;
+  const at = (a.currentTime || 0) + delta;
+  const dur = a.duration || 0;
+  if(delta > 0 && dur && at > dur && NOW.kind === "track" && NOW.i + 1 < NOW.count)
+    return playTrack(NOW.i + 1);
+  a.currentTime = Math.max(0, dur ? Math.min(at, dur) : at);
+}
+$("#mpBack").addEventListener("click", ()=> skip(-BACK_SECONDS));
+$("#mpFwd").addEventListener("click", ()=> skip(FORWARD_SECONDS));
+
+function setMediaSession(){
+  if(!("mediaSession" in navigator) || !NOW) return;
+  const art = NOW.kind === "sample" ? NOW.cover : coverUrl({id:NOW.id, cover_v:NOW.cover_v});
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: NOW.label || "", artist: NOW.author || "", album: NOW.title || "",
+    artwork: art ? [{src: art, type: "image/jpeg"}] : []});
+  // The lock screen's own skip buttons, so a chapter can be skipped without unlocking. The offset
+  // the platform hands us is ignored: iOS says 10 seconds both ways, which makes its forward
+  // button disagree with the one in the page. What they look like is the platform's to decide;
+  // how far they move is ours.
+  navigator.mediaSession.setActionHandler("seekbackward", ()=> skip(-BACK_SECONDS));
+  navigator.mediaSession.setActionHandler("seekforward", ()=> skip(FORWARD_SECONDS));
+}
+
+function setSpeed(v){
+  SPEED = v;
+  au().playbackRate = v;
+  $("#mpSpeedVal").textContent = speedLabel(v);
+  store.set("speed", String(v));
+  [...$("#speedMenu").children].forEach(b =>
+    b.classList.toggle("on", parseFloat(b.dataset.speed) === v));
+}
+$("#speedMenu").innerHTML = SPEEDS.map(v =>
+  `<button data-speed="${v}">×${speedLabel(v)}</button>`).join("");
+$("#speedMenu").addEventListener("click", e => {
+  const v = e.target.dataset.speed;
+  if(!v) return;
+  setSpeed(parseFloat(v));
+  $("#speedMenu").hidden = true;
+  $("#mpSpeed").setAttribute("aria-expanded", "false");
+});
+$("#mpSpeed").addEventListener("click", e => {
+  e.stopPropagation();
+  const open = $("#speedMenu").hidden;
+  $("#speedMenu").hidden = !open;
+  $("#mpSpeed").setAttribute("aria-expanded", open ? "true" : "false");
+});
+document.addEventListener("click", ()=>{
+  $("#speedMenu").hidden = true;
+  $("#mpSpeed").setAttribute("aria-expanded", "false");
+});
+setSpeed(SPEED);
+
+// ---- go ----
+
+loadBooks();
+</script>
+</body>
+</html>
